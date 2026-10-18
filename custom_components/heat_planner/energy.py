@@ -17,13 +17,17 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .peak import PeakConfig, caps_for_plan, limit_plans, monthly_peaks, top3_average
-from .planner import Plan, PlanHour, ZoneConfig, is_protected
+from .planner import Plan, PlanHour, ZoneConfig, comfort_reference, hour_key, is_protected
 from .tariff import TariffConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_ENERGY = "energy"
 R_PEAK = "peak_limit"
+# Capacity limiting never takes a room more than this below its own schedule
+# (or away floor): in the simulation an unbounded limiter kept the living room
+# 2 °C under its schedule all evening (+13 °C·h a day) to save one tariff step.
+PEAK_SLACK = 0.5
 
 
 def tariff_from_options(options: dict[str, Any]) -> TariffConfig:
@@ -97,20 +101,34 @@ async def async_house_hourly_kwh(hass: HomeAssistant, entity_id: str, days: int 
         if mean is None or ts is None:
             continue
         when = dt_util.as_local(dt_util.utc_from_timestamp(ts) if isinstance(ts, (int, float)) else ts)
-        out[when.replace(minute=0, second=0, microsecond=0)] = max(0.0, float(mean) * scale)
+        # hour_key: both 02:00 hours of the autumn DST change kept apart
+        out[hour_key(when)] = max(0.0, float(mean) * scale)
     return out
 
 
-def base_load(hourly: dict[datetime, float], heating_share: float = 0.0) -> dict[int, float]:
-    """A low estimate of the rest of the house per hour of day (25th percentile, last 14 days)."""
-    cutoff = dt_util.now() - timedelta(days=14)
+def base_load(
+    hourly: dict[datetime, float],
+    heating_share: float = 0.0,
+    now: datetime | None = None,
+    *,
+    high: bool = False,
+) -> dict[int, float]:
+    """The rest of the house per hour of day over the last 14 days.
+
+    A low estimate (25th percentile) by default; ``high`` gives the 75th
+    percentile, for checking that moving heat into an hour is safe.
+    """
+    cutoff = (now or dt_util.now()) - timedelta(days=14)
     by_hour: dict[int, list[float]] = {}
     for when, kwh in hourly.items():
         if when >= cutoff:
             by_hour.setdefault(when.hour, []).append(kwh)
     out: dict[int, float] = {}
     for hour, vals in by_hour.items():
-        low = quantiles(vals, n=4)[0] if len(vals) >= 4 else min(vals)
+        if high:
+            low = quantiles(vals, n=4)[2] if len(vals) >= 4 else max(vals)
+        else:
+            low = quantiles(vals, n=4)[0] if len(vals) >= 4 else min(vals)
         out[hour] = max(0.0, low * (1 - heating_share))
     return out
 
@@ -229,7 +247,7 @@ def apply_cuts(
         if zone.is_percent:
             new = max(zone.min_value, s.target - round(cut * 100))
         else:
-            floor = max(zone.min_value, zone.safety_min_temp)
+            floor = max(zone.min_value, zone.safety_min_temp, comfort_reference(zone, s) - PEAK_SLACK)
             new = s.target - (1.0 if cut < 0.5 else 2.0)
             pred = (predicted or {}).get(s.start)
             if pred is not None:

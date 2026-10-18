@@ -217,3 +217,53 @@ def shift_schedule(
         k: [max(lo, min(hi, round(v + delta, 1))) for v in day]
         for k, day in schedule.items()
     }
+
+
+DAILY_MAX = 8  # nudges per zone and day
+DAILY_RANGE = 2.0  # °C comfort may move from where it stood that morning
+
+
+def record_feedback(
+    st: dict[str, Any],
+    before: dict[str, Any],
+    kind: str,
+    now_mode: str,
+    *,
+    today: str,
+    lang: str = "en",
+    percent: bool = False,
+    room_temp: float | None = None,
+    safety_min_temp: float = 18.0,
+    now: datetime | None = None,
+) -> str:
+    """Apply one press to a zone's stored state ``st`` (settings, schedule, history).
+
+    Anyone in the house may press these, so the effect is bounded: at most
+    ``DAILY_MAX`` nudges a day, comfort within ±``DAILY_RANGE`` °C of where it
+    stood that morning and never at or below the safety floor. Returns the message.
+    """
+    history = st.setdefault("feedback", [])
+    after, message = apply_feedback(
+        before, kind, now_mode, history, lang=lang, percent=percent, room_temp=room_temp, now=now
+    )
+    changes = changed_keys(before, after)
+    anchor = st.get("feedback_anchor") or {}
+    if anchor.get("date") != today:
+        anchor = {"date": today, "comfort": before.get("comfort"), "count": 0}
+    anchor["count"] = int(anchor.get("count", 0)) + 1
+    st["feedback_anchor"] = anchor
+    if anchor["count"] > DAILY_MAX:
+        return (
+            "Det er justert mange ganger i dag – endre innstillingene i planen i stedet."
+            if lang == "nb" else "Adjusted many times today – change the settings in the plan instead."
+        )
+    if "comfort" in changes and not percent and anchor.get("comfort") is not None:
+        lo = max(anchor["comfort"] - DAILY_RANGE, safety_min_temp + 0.5)
+        changes["comfort"] = max(lo, min(anchor["comfort"] + DAILY_RANGE, float(changes["comfort"])))
+        if changes["comfort"] == before.get("comfort"):
+            changes.pop("comfort")
+    delta = changes.pop(SCHEDULE_DELTA, None)
+    if delta:
+        st["schedule"] = {str(k): v for k, v in shift_schedule(st["schedule"], delta).items()}
+    st.setdefault("settings", {}).update({k: v for k, v in changes.items() if k in before})
+    return message

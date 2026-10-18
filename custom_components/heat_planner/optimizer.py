@@ -388,6 +388,28 @@ def _hour_cost(
     above = 0.0
     floor = zone.safety_min_temp
     a, b0, bd, affine = h.a, h.b0, h.bd, h.affine
+    refs, wsub = h.ref_temps, h.w_sub
+    if affine and not percent and act is not None and bd > 0:
+        # fast path (the common case): thermostat on an affine room model
+        lim = floor - 1e-6
+        for j in range(SUBSTEPS):
+            free = a * temp + b0
+            if free >= act:
+                temp = free
+            elif free + bd <= act:
+                temp = free + bd
+                duty_sum += 1.0
+            else:
+                duty_sum += (act - free) / bd
+                temp = act
+            if lowered and temp < lim:
+                return None
+            diff = refs[j] - temp
+            if diff > 0:
+                deficit += wsub[j] * diff * diff
+            else:
+                above -= diff
+        return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
     for j in range(SUBSTEPS):
         if act is None:
             d = 0.0
@@ -409,13 +431,19 @@ def _hour_cost(
         if lowered and temp < floor - 1e-6:
             return None
         duty_sum += d
-        diff = h.ref_temps[j] - temp
+        diff = refs[j] - temp
         if diff > 0:
-            deficit += h.w_sub[j] * diff * diff
+            deficit += wsub[j] * diff * diff
         else:
             above -= diff
-    duty = duty_sum / SUBSTEPS
-    kw = duty * zone.heater_kw
+    return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
+
+
+def _finish(
+    zone: ZoneConfig, h: _Hour, w: OptimizerWeights, unit: float, peak_w: float,
+    duty_sum: float, deficit: float, above: float, temp: float,
+) -> tuple[float, float]:
+    kw = duty_sum / SUBSTEPS * zone.heater_kw
     cost = kw * h.price
     cost += deficit * _DT + w.above * unit * above * _DT
     if h.cap is not None and kw > h.cap:

@@ -161,7 +161,9 @@ def find_arrivals(
             continue
         if home:
             if not was_home and was_known and away_since is not None:
-                if when - away_since >= MIN_ABSENCE and when.hour >= NIGHT_END_HOUR:
+                # timestamps: same-zone datetimes subtract in wall time (DST nights)
+                absent = when.timestamp() - away_since.timestamp()
+                if absent >= MIN_ABSENCE.total_seconds() and when.hour >= NIGHT_END_HOUR:
                     arrivals.append(when)
             away_since = None
         elif was_home:

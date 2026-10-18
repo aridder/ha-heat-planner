@@ -72,11 +72,13 @@ def parse_price_list(items: list[Any], scale: float = 1.0) -> list[PricePoint]:
             parsed.append((start, end, float(val) * scale))
         except (TypeError, ValueError):
             continue
-    parsed.sort(key=lambda p: p[0])
+    # real time order (local wall times repeat on the autumn DST night)
+    parsed.sort(key=lambda p: p[0].timestamp())
     for i, (start, end, val) in enumerate(parsed):
         if end is None:
             nxt = parsed[i + 1][0] if i + 1 < len(parsed) else None
-            step = (nxt - start) if nxt and nxt > start else timedelta(hours=1)
+            gap = timedelta(seconds=nxt.timestamp() - start.timestamp()) if nxt else timedelta(0)
+            step = gap if gap > timedelta(0) else timedelta(hours=1)
             end = start + min(step, timedelta(hours=1))
         out.append(PricePoint(start, end, val))
     return out
@@ -191,7 +193,9 @@ class PriceSource:
             val = state.attributes.get(attr)
             if isinstance(val, list):
                 points.extend(parse_price_list(val, scale))
-        dedup: dict[datetime, PricePoint] = {p.start: p for p in points}
+        # keyed by timestamp: local datetimes of the two 02:00 hours on the autumn
+        # DST day compare equal, so one of them was silently dropped
+        dedup: dict[float, PricePoint] = {p.start.timestamp(): p for p in points}
         self._cache.clear()
-        for p in sorted(dedup.values(), key=lambda x: x.start):
+        for _, p in sorted(dedup.items()):
             self._cache.setdefault(p.start.date(), []).append(p)

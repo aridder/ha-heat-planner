@@ -14,6 +14,8 @@ from typing import Any
 
 from homeassistant.util import dt as dt_util
 
+from .planner import hour_key
+
 EVENT_ALERT = "heat_planner_alert"
 
 ALERT_PEAK_RISK = "peak_risk"
@@ -26,6 +28,8 @@ CONF_NOTIFY_SERVICE = "notify_service"
 CONF_ALERT_KINDS = "kinds"
 
 PEAK_RISK_MARGIN_KW = 0.3
+
+
 
 
 # --------------------------------------------------------------------------- savings
@@ -146,7 +150,7 @@ def load_series(
     ``planned`` is base load + heating per hour (kW ≈ kWh in one hour). The
     current hour uses ``live_kwh`` (projected from the meter) when known.
     """
-    hour = now.replace(minute=0, second=0, microsecond=0)
+    hour = hour_key(now)
     out: list[dict[str, Any]] = []
     for i in range(past_hours, 0, -1):
         t = hour - timedelta(hours=i)

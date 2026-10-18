@@ -77,11 +77,14 @@ async def test_capacity_limit_spreads_heating(hass: HomeAssistant, setup_states,
     now = dt_util.start_of_local_day() + timedelta(hours=10, minutes=5)
     freezer.move_to(now)
     hass.states.async_set("sensor.house_power", "2500", {"unit_of_measurement": "W", "device_class": "power"})
-    hass.states.async_set("climate.kjokken", "heat", {"temperature": 23, "current_temperature": 20.0, "hvac_modes": ["off", "heat"]})
-    hass.states.async_set("climate.stue", "heat", {"temperature": 23, "current_temperature": 20.0, "hvac_modes": ["off", "heat"]})
+    # rooms at comfort, big heaters: just holding them would exceed the cap. Cuts may take a
+    # room at most PEAK_SLACK below its schedule (a recovering room is not cut: at full power
+    # until the setpoint, a 0.5 °C cut saves nothing and a deeper one costs comfort)
+    hass.states.async_set("climate.kjokken", "heat", {"temperature": 23, "current_temperature": 23.0, "hvac_modes": ["off", "heat"]})
+    hass.states.async_set("climate.stue", "heat", {"temperature": 23, "current_temperature": 23.0, "hvac_modes": ["off", "heat"]})
     zones = [
-        {"zone_id": "stue", "name": "Stue", "mode": "setpoint", "climate_entity": "climate.stue", "comfort": 23, "heater_kw": 3.0},
-        {"zone_id": "kjokken", "name": "Kjøkken", "mode": "setpoint", "climate_entity": "climate.kjokken", "comfort": 23, "heater_kw": 3.0, "priority": 1},
+        {"zone_id": "stue", "name": "Stue", "mode": "setpoint", "climate_entity": "climate.stue", "comfort": 23, "heater_kw": 6.0},
+        {"zone_id": "kjokken", "name": "Kjøkken", "mode": "setpoint", "climate_entity": "climate.kjokken", "comfort": 23, "heater_kw": 6.0, "priority": 1},
     ]
     # this month: three days at ~4.5 kWh/h -> step 2–5 kW, cap ≈ 4.7 kW; base load ~1 kW
     hourly = {}
@@ -105,8 +108,9 @@ async def test_capacity_limit_spreads_heating(hass: HomeAssistant, setup_states,
         await hass.async_block_till_done()
     stue, kjokken = coord.plans["stue"], coord.plans["kjokken"]
     assert any(R_PEAK in h.reasons for h in stue.hours)
-    # never below the safety floor, whatever was cut
+    # never below the safety floor, whatever was cut – nor more than PEAK_SLACK below the schedule
     assert all(h.target is None or h.target >= 18 for p in (stue, kjokken) for h in p.hours)
+    assert all(h.target >= h.scheduled - 0.5 for h in stue.hours if R_PEAK in h.reasons)
 
 
 async def test_no_meter_no_peak_limiting(hass: HomeAssistant, setup_states) -> None:

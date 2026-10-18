@@ -15,7 +15,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import deque
 from dataclasses import dataclass, field, asdict, replace
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone, tzinfo
 from math import ceil, sqrt
 from statistics import median
 from typing import Iterable
@@ -132,6 +132,44 @@ def default_schedule(mode: str) -> dict[int, list[float]]:
     return {wd: list(day) for wd in range(7)}
 
 
+# --------------------------------------------------------------------------- hours
+
+
+def hour_key(when: datetime) -> datetime:
+    """Start of the hour containing ``when``, with a fixed UTC offset.
+
+    Aware datetimes sharing a ``zoneinfo`` zone compare and hash by wall time,
+    so the two 02:00 hours of the autumn DST change (Europe/Oslo, last Sunday
+    of October) collide as dict keys and ``+ timedelta(hours=1)`` skips one of
+    them. With a fixed offset every real hour is a distinct key, arithmetic is
+    real-time, and ``hour``/``date()``/``weekday()`` still read local wall time.
+    """
+    if when.tzinfo is None:
+        return when.replace(minute=0, second=0, microsecond=0)
+    return when.astimezone(timezone(when.utcoffset() or timedelta(0))).replace(
+        minute=0, second=0, microsecond=0
+    )
+
+
+def hours_from(start: datetime, n: int, tz: tzinfo | None = None) -> list[datetime]:
+    """``n`` consecutive real hours from the hour containing ``start`` (see :func:`hour_key`).
+
+    Steps in UTC and converts back to ``tz`` (default: ``start``'s zone), so a
+    25-hour day has two 02:00 hours and a 23-hour day none.
+    """
+    first = hour_key(start)
+    if first.tzinfo is None:
+        return [first + timedelta(hours=i) for i in range(n)]
+    zone = tz or start.tzinfo
+    base = first.astimezone(timezone.utc)
+    return [hour_key((base + timedelta(hours=i)).astimezone(zone)) for i in range(n)]
+
+
+def rekey_hours(values: dict[datetime, float] | None) -> dict[datetime, float]:
+    """The same mapping keyed by :func:`hour_key` (later entries win on collisions)."""
+    return {hour_key(k): v for k, v in (values or {}).items()}
+
+
 # --------------------------------------------------------------------------- prices
 
 
@@ -139,7 +177,7 @@ def hourly_prices(points: Iterable[PricePoint]) -> dict[datetime, float]:
     """Aggregate any price resolution (15 min, 1 h) to hourly averages."""
     buckets: dict[datetime, list[float]] = {}
     for p in points:
-        hour = p.start.replace(minute=0, second=0, microsecond=0)
+        hour = hour_key(p.start)
         buckets.setdefault(hour, []).append(p.price)
     return {h: sum(v) / len(v) for h, v in sorted(buckets.items())}
 
@@ -329,14 +367,19 @@ def build_plan(
     ``initial_off_run`` is how many hours heating has already been off right
     before ``start``; it counts toward ``max_off_hours``.
     """
-    start = start.replace(minute=0, second=0, microsecond=0)
+    starts = hours_from(start, hours)
+    start = starts[0] if starts else hour_key(start)
+    # one key per real hour (DST): see hour_key
+    prices = rekey_hours(prices)
+    outdoor = rekey_hours(outdoor)
+    solar = rekey_hours(solar) if solar else solar
+    kw_cap = rekey_hours(kw_cap) if kw_cap else kw_cap
     levels = classify_prices(prices, rules)
     agg = _clamp(zone.price_aggressiveness, 0.0, 2.0)
 
     slots: list[PlanHour] = []
     away_active = away_now
-    for i in range(hours):
-        t = start + timedelta(hours=i)
+    for t in starts:
         price = prices.get(t)
         level = levels.get(t, LEVEL_NORMAL)
         sched, is_override = scheduled_value(zone, schedule, overrides, t)
@@ -421,16 +464,24 @@ def build_plan(
     _cap_off_runs(zone, slots, initial_off_run)
     refs = [comfort_reference(zone, s) for s in slots]
     used = "rules"
+    if method != "optimize" and room_temp is not None and not zone.is_percent:
+        _comfort_guard(zone, slots, refs, room_temp, outdoor or {}, outdoor_default, solar)
     if method == "optimize" and room_temp is not None:
         from .optimizer import optimize_zone  # local import: optimizer imports planner
 
+        # Nothing worth shifting (e.g. Norgespris + a small day/night grid
+        # difference): the rules call every hour "normal" and the schedule is kept
+        # as is – the optimiser would still trade comfort for energy.
+        horizon = [prices[s.start] for s in slots if s.start in prices]
+        flat = bool(horizon) and max(horizon) - min(horizon) < rules.min_spread
         try:
-            slots = optimize_zone(
-                zone, slots, prices, room_temp, outdoor or {}, outdoor_default,
-                solar=solar, kw_cap=kw_cap, weights=optimizer_weights,
-                initial_off_run=initial_off_run,
-            )
-            used = "optimize"
+            if not flat or kw_cap:
+                slots = optimize_zone(
+                    zone, slots, prices, room_temp, outdoor or {}, outdoor_default,
+                    solar=solar, kw_cap=kw_cap, weights=optimizer_weights,
+                    initial_off_run=initial_off_run,
+                )
+                used = "optimize"
         except Exception:  # noqa: BLE001 - never lose the plan: keep the rules result
             pass
     if adjust is not None:
@@ -472,6 +523,60 @@ def build_plan(
         baseline_comfort_deficit=comfort_deficit(zone, base_slots, refs),
         method=used,
     )
+
+
+def baseline_hour(
+    zone: ZoneConfig,
+    schedule: dict[int, list[float]],
+    overrides: dict[str, list[float]],
+    prices: dict[datetime, float],
+    start: datetime,
+    *,
+    room_temp: float | None,
+    queue: list[float] | None = None,
+    outdoor: dict[datetime, float] | None = None,
+    outdoor_default: float = 5.0,
+    solar: dict[datetime, float] | None = None,
+) -> tuple[PlanHour, list[float]]:
+    """One hour of the schedule alone (no price logic, nobody away).
+
+    Returns the hour (``cost``, ``kwh``, ``predicted`` = where the room ends) and
+    the heat still on its way through a slow floor (``lag_hours``) at the end of
+    the hour. Pass both back in (``room_temp``, ``queue``) for the next hour to
+    carry this "shadow" house along; ``queue=None`` starts it as if the
+    thermostat had been holding ``room_temp``.
+    """
+    t = hour_key(start)
+    sched, _ = scheduled_value(zone, schedule, overrides, t)
+    target = _clamp(sched, zone.min_value, zone.max_value)
+    slot = PlanHour(
+        start=t, price=rekey_hours(prices).get(t), level=LEVEL_NORMAL, scheduled=round(sched, 2),
+        target=round(target) if zone.is_percent else round(target * 2) / 2, mode="normal", reasons=[],
+    )
+    return simulate_hour(zone, slot, room_temp=room_temp, queue=queue, outdoor=outdoor,
+                         outdoor_default=outdoor_default, solar=solar)
+
+
+def simulate_hour(
+    zone: ZoneConfig,
+    slot: PlanHour,
+    *,
+    room_temp: float | None,
+    queue: list[float] | None = None,
+    outdoor: dict[datetime, float] | None = None,
+    outdoor_default: float = 5.0,
+    solar: dict[datetime, float] | None = None,
+) -> tuple[PlanHour, list[float]]:
+    """Simulate one hour with ``slot``'s target from a carried model state.
+
+    Returns a copy of the slot with ``duty``/``kwh``/``cost``/``predicted``
+    filled in and the dead-time queue at the end (see :func:`baseline_hour`).
+    """
+    out = replace(slot, reasons=list(slot.reasons))
+    q = list(queue) if queue is not None else []
+    _simulate(zone, [out], room_temp, rekey_hours(outdoor), outdoor_default,
+              solar=rekey_hours(solar) if solar else None, queue=q)
+    return out, q
 
 
 def _simulate_with(
@@ -544,6 +649,82 @@ def explain_savings(plan: Plan, lang: str = "nb", currency: str | None = None) -
     return ", ".join(parts)
 
 
+COMFORT_BUDGET = 1.0  # °C·h per day of recovery tail the price rules may add (rules mode)
+
+
+def _comfort_guard(
+    zone: ZoneConfig,
+    slots: list[PlanHour],
+    refs: list[float],
+    room_temp: float,
+    outdoor: dict[datetime, float],
+    outdoor_default: float,
+    solar: dict[datetime, float] | None,
+) -> None:
+    """Rules mode: back off price reductions the room model says cost too much.
+
+    The rules lower expensive hours by a fixed step whatever the weather; in a
+    cold spell a slow room needs hours to recover from that (the simulation
+    measured about +3 °C·h a day at -15 °C). Here the plan is simulated and
+
+    * an OFF hour after which the room would end below ``safety_min_temp``
+      (within the floor's dead time) is turned back into a lowered setpoint, and
+    * while the comfort deficit exceeds the schedule's own by more than the
+      setback the rules intend (°C lowered × hours) plus ``COMFORT_BUDGET`` per
+      day – i.e. the room would take long to recover – every price-lowered
+      hour is raised 0.5 °C (OFF hours count as intended).
+    """
+    ref_slots = [replace(s, target=r, reasons=[], mode="normal") for s, r in zip(slots, refs)]
+    _simulate_with(zone, ref_slots, room_temp, outdoor, outdoor_default, solar)
+    base = comfort_deficit(zone, ref_slots, refs) or 0.0
+    budget = COMFORT_BUDGET * len(slots) / 24
+    lag = int(ceil(zone.thermal.lag_hours or 0.0))
+    for _ in range(8):
+        _simulate_with(zone, slots, room_temp, outdoor, outdoor_default, solar)
+        changed = False
+        for i, s in enumerate(slots):
+            if s.target is not None:
+                continue
+            after = [x.predicted for x in slots[i : i + lag + 1] if x.predicted is not None]
+            if after and min(after) < zone.safety_min_temp:
+                t = _clamp(s.scheduled - zone.price_shift, zone.min_value, zone.max_value)
+                s.target = round(max(t, min(s.scheduled, zone.safety_min_temp)) * 2) / 2
+                s.mode = "save"
+                s.reasons = [r for r in s.reasons if r != R_EXTREME_OFF] + [R_EXPENSIVE, R_SAFETY]
+                changed = True
+        if changed:
+            continue
+        intended = sum(
+            max(0.0, r - (s.predicted if s.target is None else s.target))  # type: ignore[operator]
+            for s, r in zip(slots, refs)
+            if s.target is not None or s.predicted is not None
+        )
+        if (comfort_deficit(zone, slots, refs) or 0.0) - base <= intended + budget:
+            break
+        for s, r in zip(slots, refs):
+            # (OFF hours are the user's explicit extreme_off choice: only the safety check above)
+            if s.target is None or R_EXPENSIVE not in s.reasons or s.target >= r - 0.01:
+                continue
+            s.target = min(r, s.target + 0.5)
+            changed = True
+            if s.target >= r - 0.01:
+                s.reasons = [x for x in s.reasons if x != R_EXPENSIVE]
+                s.mode = _plain_mode(zone, s)
+        if not changed:
+            break
+
+
+def _plain_mode(zone: ZoneConfig, s: PlanHour) -> str:
+    base = 0.0 if zone.is_percent else zone.comfort
+    if R_AWAY in s.reasons:
+        return "away"
+    if not zone.is_percent and s.scheduled > base + 0.01:
+        return "comfort"
+    if not zone.is_percent and s.scheduled < base - 0.01:
+        return "setback"
+    return "normal"
+
+
 def _cap_off_runs(zone: ZoneConfig, slots: list[PlanHour], initial_off_run: int = 0) -> None:
     """Never leave heating off for more than ``max_off_hours`` in a row.
 
@@ -573,8 +754,13 @@ def _simulate(
     outdoor_default: float,
     *,
     solar: dict[datetime, float] | None = None,
+    queue: list[float] | None = None,
 ) -> None:
     """Fill predicted temperature, duty, kWh and cost for each slot (in place).
+
+    ``queue`` (optional, in/out): duty commanded but not yet felt (dead time),
+    one entry per quarter hour. Used as the starting state when it has the
+    right length, and replaced by the state at the end.
 
     ``solar`` maps hour starts to a 0..1 solar factor (see ``solar.py``); missing
     hours count as no sun. The heater's effect is delayed by the model's
@@ -609,7 +795,7 @@ def _simulate(
                 duty = 0.0 if s.target is None else _clamp(s.target / 100.0, 0, 1)
                 if temp is not None:
                     if fifo is None:
-                        fifo = deque([duty] * n_lag)
+                        fifo = deque(queue if queue and len(queue) == n_lag else [duty] * n_lag)
                     fifo.append(duty)
                     temp = model.step(temp, fifo.popleft(), t_out, dt, sol)
             elif temp is None:
@@ -617,8 +803,11 @@ def _simulate(
                 duty = 0.0 if s.target is None else 0.35
             else:
                 if fifo is None:
-                    # assume the thermostat was holding the start temperature
-                    fifo = deque([hold_duty(temp, t_out, sol)] * n_lag)
+                    if queue and len(queue) == n_lag:
+                        fifo = deque(queue)
+                    else:
+                        # assume the thermostat was holding the start temperature
+                        fifo = deque([hold_duty(temp, t_out, sol)] * n_lag)
                 # temperature once the heat already queued has arrived
                 pred = temp
                 for d in fifo:
@@ -654,6 +843,8 @@ def _simulate(
         s.kwh = round(s.duty * zone.heater_kw, 3)
         s.cost = None if s.price is None else round(s.kwh * s.price, 4)
         s.predicted = None if temp is None else round(temp, 2)
+    if queue is not None:
+        queue[:] = list(fifo or [])
 
 
 # --------------------------------------------------------------------------- learning
