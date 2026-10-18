@@ -3,19 +3,12 @@
 from datetime import timedelta
 
 from freezegun.api import FrozenDateTimeFactory
-import pytest
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_mock_service
 
 from custom_components.heat_planner.const import DOMAIN
-from custom_components.heat_planner.planner import (
-    PriceRules,
-    ZoneConfig,
-    build_plan,
-    default_schedule,
-)
+from custom_components.heat_planner.planner import PriceRules, ZoneConfig, build_plan, default_schedule
 
 from .test_integration import _entry, setup_states  # noqa: F401
 
@@ -61,7 +54,7 @@ async def test_user_turning_thermostat_off_is_overridden(hass: HomeAssistant, se
 
 
 async def test_service_days_from_ui_selector(hass: HomeAssistant, setup_states) -> None:
-    entry, _, _ = await _setup(hass)
+    _entry, _, _ = await _setup(hass)
     # services.yaml select selector sends strings "0".."6"
     await hass.services.async_call(
         DOMAIN, "set_schedule",
@@ -84,7 +77,7 @@ async def test_subscription_survives_reload(hass: HomeAssistant, setup_states, h
 
 
 async def test_mode_change_resets_schedule(hass: HomeAssistant, setup_states) -> None:
-    entry, set_temp, _ = await _setup(hass)
+    entry, _set_temp, _ = await _setup(hass)
     coord = entry.runtime_data
     assert coord.schedule("bad")[0][6] == 70.0
     zones = [dict(z) for z in entry.options["zones"]]

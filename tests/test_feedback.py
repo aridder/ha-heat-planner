@@ -1,6 +1,6 @@
 """Tests for comfort feedback (feedback.py)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from custom_components.heat_planner.feedback import (
     HISTORY_MAX,
@@ -10,7 +10,7 @@ from custom_components.heat_planner.feedback import (
     shift_schedule,
 )
 
-NOW = datetime(2026, 10, 18, 18, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 18, 18, 0, tzinfo=UTC)
 BASE = {
     "comfort": 21.0, "min_value": 5.0, "max_value": 28.0, "away_offset": -4.0, "away_until_hour": 13,
     "price_shift": 1.0, "preheat": 1.0, "safety_min_temp": 18.0, "extreme_off": True,

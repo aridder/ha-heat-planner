@@ -100,16 +100,17 @@ Only use climate entities from the list. Keep comfort between 18 and 24 °C unle
 Percent zones: away_offset, price_shift and preheat are in percentage points."""
 
 
-def _extract_json(text: str) -> dict[str, Any] | None:
+def _extract_json(text: Any) -> dict[str, Any] | None:
     if isinstance(text, dict):
         return text
     m = re.search(r"\{.*\}", text or "", re.S)
     if not m:
         return None
     try:
-        return json.loads(m.group(0))
+        data = json.loads(m.group(0))
     except json.JSONDecodeError:
         return None
+    return data if isinstance(data, dict) else None
 
 
 def _curve(values: Any, mode: str) -> list[float] | None:
@@ -143,12 +144,12 @@ def validate_proposal(
     for z in data["zones"]:
         if not isinstance(z, dict):
             continue
-        ent = z.get("climate_entity")
+        ent = str(z.get("climate_entity"))
         cand = known.get(ent)
         if cand is None or ent in used:
             continue
         used.add(ent)
-        mode = z.get("mode") if z.get("mode") in (MODE_SETPOINT, MODE_PERCENT) else cand.mode
+        mode: str = z["mode"] if z.get("mode") in (MODE_SETPOINT, MODE_PERCENT) else cand.mode
         number = z.get("number_entity") or cand.number_entity
         if mode == MODE_PERCENT and not (number and hass.states.get(number)):
             mode, number = MODE_SETPOINT, None
@@ -176,7 +177,7 @@ def validate_proposal(
             lo, hi = (PERCENT_LIMITS.get(k) if mode == MODE_PERCENT else None) or LIMITS.get(k, (f, f))
             f = max(lo, min(hi, f))
             settings[k] = int(f) if k.endswith("_hour") or k == "max_off_hours" else f
-        zone = cand.as_zone(0.0 if cand.power_sensor else 0.0)
+        zone = cand.as_zone(0.0)
         zone.update({"zone_id": zid, "name": name, "mode": mode, "comfort": comfort})
         zone.pop("number_entity", None)
         zone.pop("temperature_sensor", None)

@@ -9,9 +9,10 @@ and be unit tested without Home Assistant. Any object with ``state``,
 from __future__ import annotations
 
 from bisect import bisect_right
+from collections.abc import Callable, Sequence
 from datetime import datetime, timedelta
 import math
-from typing import Any, Callable, Sequence
+from typing import Any
 
 from .planner import Sample
 from .solar import CONDITION_CLOUD, UNKNOWN_SKY, clear_sky_factor, solar_factor
@@ -126,14 +127,13 @@ def samples_from_history(
             return hist.get(ref, [])
         return ref
 
+    def current_temperature(s: Any) -> float | None:
+        v = _float(_attrs(s).get("current_temperature"))
+        return v if v is not None and v > 1 else None
+
     room = _series(states(sensor), lambda s: _float(s.state)) if sensor else _Step([])
     if not room.t:
-        room = _series(
-            states(climate),
-            lambda s: (lambda v: v if v is not None and v > 1 else None)(
-                _float(_attrs(s).get("current_temperature"))
-            ),
-        )
+        room = _series(states(climate), current_temperature)
     heat = _series(
         states(climate),
         lambda s: None if "hvac_action" not in _attrs(s) else _attrs(s).get("hvac_action") == "heating",

@@ -80,9 +80,9 @@ def roll_savings(sv: dict[str, Any], hour: datetime, current: Callable[[], float
         sv["day"], sv["day_total"] = _day(hour), 0.0
         changed = True
     if not sv.get("pending"):
-        amount = current()
-        if amount is not None:
-            sv["pending"] = {"hour": hour.isoformat(), "amount": round(amount, 4)}
+        estimate = current()
+        if estimate is not None:
+            sv["pending"] = {"hour": hour.isoformat(), "amount": round(estimate, 4)}
             changed = True
     return changed
 

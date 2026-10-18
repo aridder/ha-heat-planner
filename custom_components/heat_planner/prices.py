@@ -43,6 +43,7 @@ _VALUE_KEYS = ("value", "price", "total", "price_per_kwh", "energy")
 
 
 def _to_dt(value: Any) -> datetime | None:
+    dt: datetime | None
     if isinstance(value, datetime):
         dt = value
     elif isinstance(value, str):
@@ -114,8 +115,7 @@ class PriceSource:
             await self._tibber()
         else:
             self._from_sensor()
-        points = [p for d in sorted(self._cache) for p in self._cache[d]]
-        return points
+        return [p for d in sorted(self._cache) for p in self._cache[d]]
 
     async def _nordpool_day(self, day: date) -> None:
         if self._cache.get(day):
@@ -126,7 +126,7 @@ class PriceSource:
         if last and now - last < timedelta(minutes=15):
             return
         self._last_try[day] = now
-        area = self.config.get(CONF_NORDPOOL_AREA)
+        area = str(self.config.get(CONF_NORDPOOL_AREA))
         try:
             resp = await self.hass.services.async_call(
                 "nordpool",
@@ -142,7 +142,8 @@ class PriceSource:
         except Exception as err:  # noqa: BLE001 - not published yet, or integration down
             _LOGGER.debug("Nord Pool prices for %s not available: %s", day, err)
             return
-        items = (resp or {}).get(area) or next(iter((resp or {}).values()), [])
+        data: dict[str, Any] = dict(resp or {})
+        items: list[Any] = data.get(area) or next(iter(data.values()), [])
         # The core integration reports currency per MWh
         points = parse_price_list(items, scale=1 / 1000)
         if points:
@@ -170,8 +171,8 @@ class PriceSource:
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("Tibber prices not available: %s", err)
             return
-        homes = (resp or {}).get("prices") or {}
-        items = next(iter(homes.values()), []) if homes else []
+        homes: Any = dict(resp or {}).get("prices") or {}
+        items: list[Any] = next(iter(homes.values()), []) if homes else []
         points = parse_price_list(items)
         if points:
             self._cache.clear()

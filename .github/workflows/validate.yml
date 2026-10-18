@@ -5,28 +5,60 @@ on:
   pull_request:
   schedule:
     - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.13"
 
 jobs:
   hassfest:
+    name: Hassfest
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: home-assistant/actions/hassfest@master
 
   hacs:
+    name: HACS
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v5
       - uses: hacs/action@main
         with:
           category: integration
           ignore: brands
 
-  tests:
+  lint:
+    name: Ruff
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
-          python-version: "3.13"
-      - run: pip install pytest-homeassistant-custom-component
-      - run: pytest -q
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install ruff==0.17.1
+      - run: ruff check --output-format=github .
+
+  tests:
+    name: Tests, coverage and types
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: .github/workflows/validate.yml
+      - name: Install
+        run: pip install pytest-homeassistant-custom-component==0.13.316 pytest-cov mypy==2.4.0
+      - name: Pytest (fails below 95 % coverage)
+        run: pytest -q -p no:cacheprovider --cov --cov-report=term-missing:skip-covered
+      - name: Mypy
+        run: mypy

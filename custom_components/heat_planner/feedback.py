@@ -19,8 +19,9 @@ two people tapping at once does not count twice.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from copy import deepcopy
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 TOO_COLD = "too_cold"
@@ -116,7 +117,7 @@ def apply_feedback(
     t = _lang(lang)
     if kind not in KINDS:
         return deepcopy(settings), t["unknown"]
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
 
     # Debounce: the same kind of feedback within ten minutes counts once.
     for ev in reversed(history):
@@ -138,7 +139,7 @@ def apply_feedback(
     fmt = lambda v: _fmt(v, percent, lang)  # noqa: E731
     fmt_t = lambda v: _fmt(v, False, lang)  # noqa: E731
 
-    def change(key: str, new: float, msg_key: str, f=fmt) -> bool:
+    def change(key: str, new: float, msg_key: str, f: Callable[[float], str] = fmt) -> bool:
         old = float(s.get(key, 0) or 0)
         new = round(new, 2)
         if abs(new - old) < 1e-9:
@@ -174,29 +175,28 @@ def apply_feedback(
             "comfort_up",
         ):
             msgs.append(t["limit"])
-    else:  # too warm
-        if mode == "preheat" and float(s.get("preheat", 0) or 0) > 0:
-            change("preheat", max(0.0, float(s["preheat"]) - step), "preheat")
-        elif percent:
-            out[SCHEDULE_DELTA] = -STEP_PCT
-            msgs.append(t["sched_down"].format(d=round(STEP_PCT)))
-        elif not change(
-            "comfort",
-            max(
-                COMFORT_MIN,
-                float(s.get("min_value", 5)),
-                float(s.get("comfort", 21)) - STEP,
-            ),
-            "comfort_down",
-        ):
-            msgs.append(t["limit"])
+    elif mode == "preheat" and float(s.get("preheat", 0) or 0) > 0:
+        change("preheat", max(0.0, float(s["preheat"]) - step), "preheat")
+    elif percent:
+        out[SCHEDULE_DELTA] = -STEP_PCT
+        msgs.append(t["sched_down"].format(d=round(STEP_PCT)))
+    elif not change(
+        "comfort",
+        max(
+            COMFORT_MIN,
+            float(s.get("min_value", 5)),
+            float(s.get("comfort", 21)) - STEP,
+        ),
+        "comfort_down",
+    ):
+        msgs.append(t["limit"])
 
     history.append(
         {
             "ts": now.isoformat(),
             "kind": kind,
             "mode": mode,
-            "changed": {k: v for k, v in out.items()},
+            "changed": dict(out),
         }
     )
     del history[:-HISTORY_MAX]

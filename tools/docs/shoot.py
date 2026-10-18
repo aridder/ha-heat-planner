@@ -1,6 +1,7 @@
 """Render the README screenshots (docs/*.png) from the real card and help.
 
-    python3 tools/docs/shoot.py            # writes docs/*.png (English, 2x)
+    python3 tools/docs/shoot.py                      # writes docs/*.png (English, 2x)
+    python3 tools/docs/shoot.py --only card,settings # just those images
 
 Needs Playwright with Chromium (``pip install playwright && playwright install chromium``).
 The data is example data from make_mock.py, run through the integration's own
@@ -63,6 +64,11 @@ HELP = "document.querySelector('heat-planner-help-card heat-planner-help').shado
 
 
 def main() -> None:
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--only", default="", help="comma-separated image names without .png (default: all)")
+    only = {x.strip() for x in ap.parse_args().only.split(",") if x.strip()}
+    want = lambda name: not only or name.removesuffix(".png") in only  # noqa: E731
     DOCS.mkdir(exist_ok=True)
     spot = mock("spot")
     errors: list[str] = []
@@ -74,30 +80,36 @@ def main() -> None:
 
         # Main card, light and dark
         for theme, name in (("light", "card.png"), ("dark", "dark.png")):
+            if not want(name):
+                continue
             ctx, pg, err = open_page(b, spot, 940, f"&theme={theme}")
             pg.locator("heat-planner-card").screenshot(path=str(DOCS / name))
             errors += err
             ctx.close()
 
         # Settings panel (optimiser switch, Auto warm-up, model notes)
-        ctx, pg, err = open_page(b, spot, 940)
-        pg.evaluate(f"{CARD}.querySelector('details').open = true")
-        pg.wait_for_timeout(150)
-        padded(pg, pg.locator("heat-planner-card").locator("details"), DOCS / "settings.png", 18)
-        errors += err
-        ctx.close()
+        if want("settings"):
+            ctx, pg, err = open_page(b, spot, 940)
+            pg.evaluate(f"{CARD}.querySelector('details').open = true")
+            pg.wait_for_timeout(150)
+            padded(pg, pg.locator("heat-planner-card").locator("details"), DOCS / "settings.png", 18)
+            errors += err
+            ctx.close()
 
         # Editing a day
-        ctx, pg, err = open_page(b, spot, 940)
-        pg.evaluate(f"[...{CARD}.querySelectorAll('button.btn')].find((x) => x.textContent === 'Edit day').click()")
-        pg.wait_for_timeout(400)
-        pg.locator("heat-planner-card").screenshot(path=str(DOCS / "edit.png"))
-        errors += err
-        ctx.close()
+        if want("edit"):
+            ctx, pg, err = open_page(b, spot, 940)
+            pg.evaluate(f"[...{CARD}.querySelectorAll('button.btn')].find((x) => x.textContent === 'Edit day').click()")
+            pg.wait_for_timeout(400)
+            pg.locator("heat-planner-card").screenshot(path=str(DOCS / "edit.png"))
+            errors += err
+            ctx.close()
 
         # The guide: one image per section
         ctx, pg, err = open_page(b, spot, 800, "&help=1")
-        for sid in ("day", "rules", "tariff", "peak", "away", "arrival", "manual", "feedback", "safety", "learn", "confidence"):
+        for sid in ("day", "rules", "optimizer", "tariff", "peak", "away", "arrival", "manual", "feedback", "safety", "learn", "confidence"):
+            if not want(f"help-{sid}"):
+                continue
             handle = pg.evaluate_handle(f"{HELP}.getElementById('{sid}')")
             padded(pg, handle.as_element(), DOCS / f"help-{sid}.png", 22)
         errors += err

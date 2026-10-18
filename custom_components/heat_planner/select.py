@@ -3,11 +3,16 @@
 from __future__ import annotations
 
 from homeassistant.components.select import SelectEntity
+from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HeatPlannerConfigEntry
-from .entity import HeatPlannerEntity
+from .coordinator import HeatPlannerCoordinator
+from .entity import HeatPlannerZoneEntity
+
+# Writes go through the coordinator, which serialises them itself.
+PARALLEL_UPDATES = 0
 
 STRATEGIES = {"off": 0.0, "gentle": 0.5, "balanced": 1.0, "aggressive": 2.0}
 
@@ -17,14 +22,18 @@ async def async_setup_entry(
     entry: HeatPlannerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add one price strategy select per zone."""
     coord = entry.runtime_data
     async_add_entities(StrategySelect(coord, z["zone_id"]) for z in coord.zone_configs)
 
 
-class StrategySelect(HeatPlannerEntity, SelectEntity):
+class StrategySelect(HeatPlannerZoneEntity, SelectEntity):
+    """How hard the zone chases cheap hours."""
+
+    _attr_entity_category = EntityCategory.CONFIG
     _attr_options = list(STRATEGIES)
 
-    def __init__(self, coord, zone_id: str) -> None:
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "strategy")
 
     @property

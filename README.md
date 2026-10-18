@@ -1,6 +1,9 @@
 <div align="center">
 
-# 🌡️ Heat Planner
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="custom_components/heat_planner/brand/dark_logo@2x.png">
+  <img src="custom_components/heat_planner/brand/logo@2x.png" alt="Heat Planner" width="420">
+</picture>
 
 **Plan your heating around electricity prices, who's home and how each room behaves – and see exactly why it does what it does.**
 
@@ -43,6 +46,7 @@ Built for electric floor heating in the Nordics, but it works with any `climate`
 - [Services and automations](#services-and-automations)
 - [How it compares](#how-it-compares)
 - [FAQ](#faq)
+- [Limitations, diagnostics and removal](#limitations-diagnostics-and-removal)
 - [Roadmap](#roadmap)
 - [Contributing](#contributing)
 - [Norsk](#norsk)
@@ -276,9 +280,12 @@ Percent rooms change by 5 percentage points. A night setback in your own day cur
 ```yaml
 type: custom:heat-planner-card
 zones: [stue, kjokken]   # optional – default: all rooms
-hours: 36                # optional – hours shown, default 36
+hours: 36                # optional – 12–48 hours shown, default 36
 entry_id: 01ABC…         # optional – if you have more than one Heat Planner
+show_help: true          # optional – show the "How it works" button, default true
 ```
+
+Everything above can also be set in the card's visual editor.
 
 The guide can also live on its own view:
 
@@ -430,6 +437,23 @@ No. Planning and learning happen in Home Assistant. Only if you choose AI‑assi
 Anything exposed as a <code>climate</code> entity with a heat mode works. The house description gives each room a sensible starting model; learning refines it.
 </details>
 
+## Limitations, diagnostics and removal
+
+**Known limitations**
+
+- Plans are hourly; quarter‑hour prices are averaged.
+- Rooms are controlled through their thermostat's setpoint (or a percent entity) – Heat Planner never switches relays directly.
+- Capacity limiting needs a whole‑house power meter with long‑term statistics.
+- Learning needs the Recorder and a few days of history; until then the house description is used.
+
+**When something is wrong** Heat Planner raises a repair under Settings → System → Repairs: no electricity prices for several hours, an unavailable whole‑house meter (often an expired Tibber login – re‑authenticate the Tibber integration), or *Learn from history* without the Recorder. Each repair disappears by itself when the cause is gone. For a bug report, download diagnostics from the Heat Planner entry (⋮ → Download diagnostics); people, notify targets and your own words are redacted.
+
+**Removal**
+
+1. Settings → Devices & services → Heat Planner → ⋮ → **Delete**. Thermostats are given back their normal schedule, and the stored schedules and learned models are deleted.
+2. Remove the Heat Planner card from your dashboards.
+3. In HACS, remove the repository (or delete `custom_components/heat_planner`) and restart Home Assistant.
+
 ## Roadmap
 
 - Occupancy beyond arrival – when you leave, which rooms are used
@@ -442,8 +466,10 @@ Anything exposed as a <code>climate</code> entity with a heat mode works. The ho
 Issues and pull requests are welcome.
 
 ```bash
-pip install pytest-homeassistant-custom-component
-pytest
+pip install pytest-homeassistant-custom-component pytest-cov ruff mypy
+pytest --cov          # fails below 95 % coverage
+ruff check .
+mypy
 ```
 
 The card and guide are plain JavaScript with no build step (`custom_components/heat_planner/frontend/`).

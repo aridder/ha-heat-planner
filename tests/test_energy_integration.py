@@ -3,7 +3,6 @@
 from datetime import timedelta
 
 from freezegun.api import FrozenDateTimeFactory
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service

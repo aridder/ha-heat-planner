@@ -18,6 +18,7 @@ notice.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import Any
@@ -84,7 +85,7 @@ class ArrivalModel:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any] | None) -> "ArrivalModel":
+    def from_dict(cls, data: dict[str, Any] | None) -> ArrivalModel:
         model = cls()
         if not isinstance(data, dict):
             return model
@@ -130,7 +131,7 @@ def _to_time(minutes: int) -> time:
 
 
 def find_arrivals(
-    person_histories: dict[str, list[tuple[datetime, str]]], tz: tzinfo
+    person_histories: Mapping[str, Sequence[tuple[datetime | None, str]]], tz: tzinfo
 ) -> list[datetime]:
     """All arrivals (local time) after an absence of at least two hours."""
     events: list[tuple[datetime, str, str]] = []
@@ -173,7 +174,7 @@ def find_arrivals(
 
 
 def learn_arrivals(
-    person_histories: dict[str, list[tuple[datetime, str]]],
+    person_histories: Mapping[str, Sequence[tuple[datetime | None, str]]],
     tz: tzinfo,
     now: datetime | None = None,
     previous: ArrivalModel | None = None,
@@ -196,9 +197,9 @@ def learn_arrivals(
     first: dict[date, int] = {}
     if previous is not None:
         for obs in previous.observations.values():
-            for d, m in obs:
+            for iso, m in obs:
                 try:
-                    first[date.fromisoformat(d)] = m
+                    first[date.fromisoformat(iso)] = m
                 except ValueError:
                     continue
     learned: dict[date, int] = {}

@@ -1,31 +1,47 @@
 name: Release
 
+# A new version in manifest.json on main publishes a GitHub release:
+# tag v<version>, heat_planner.zip, and notes from CHANGELOG.md.
 on:
-  release:
-    types: [published]
+  push:
+    branches: [main]
+    paths: [custom_components/heat_planner/manifest.json]
+  workflow_dispatch:
 
 jobs:
-  zip:
+  release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Set version
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Read version
+        id: v
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          python3 - "$VERSION" <<'PY'
-          import json, re, sys, pathlib
+          VERSION=$(python3 -c "import json;print(json.load(open('custom_components/heat_planner/manifest.json'))['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          if git rev-parse "v$VERSION" >/dev/null 2>&1; then echo "exists=true" >> "$GITHUB_OUTPUT"; else echo "exists=false" >> "$GITHUB_OUTPUT"; fi
+      - name: Release notes from CHANGELOG.md
+        if: steps.v.outputs.exists == 'false'
+        run: |
+          python3 - "${{ steps.v.outputs.version }}" <<'PY'
+          import re, sys, pathlib
           v = sys.argv[1]
-          m = pathlib.Path("custom_components/heat_planner/manifest.json")
-          d = json.loads(m.read_text()); d["version"] = v; m.write_text(json.dumps(d, indent=2) + "\n")
-          for p in ["custom_components/heat_planner/const.py"]:
-              f = pathlib.Path(p); f.write_text(re.sub(r'VERSION: Final = "[^"]+"', f'VERSION: Final = "{v}"', f.read_text()))
-          f = pathlib.Path("custom_components/heat_planner/frontend/heat-planner-card.js")
-          f.write_text(re.sub(r'const VERSION = "[^"]+"', f'const VERSION = "{v}"', f.read_text()))
+          text = pathlib.Path("CHANGELOG.md").read_text() if pathlib.Path("CHANGELOG.md").exists() else ""
+          m = re.search(rf"^## \[?{re.escape(v)}\]?.*?$(.*?)(?=^## |\Z)", text, re.S | re.M)
+          pathlib.Path("notes.md").write_text((m.group(1).strip() if m else f"Heat Planner {v}") + "\n")
           PY
       - name: Zip
-        run: cd custom_components/heat_planner && zip -r ../../heat_planner.zip .
+        if: steps.v.outputs.exists == 'false'
+        run: cd custom_components/heat_planner && zip -r ../../heat_planner.zip . -x "__pycache__/*"
       - uses: softprops/action-gh-release@v2
+        if: steps.v.outputs.exists == 'false'
         with:
+          tag_name: v${{ steps.v.outputs.version }}
+          name: ${{ steps.v.outputs.version }}
+          target_commitish: ${{ github.sha }}
+          body_path: notes.md
           files: heat_planner.zip
+          make_latest: true

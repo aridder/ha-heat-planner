@@ -18,6 +18,23 @@
           "price_extra": "Only used to estimate cost. Around 0.45 kr in Norway (grid energy charge + electricity tax incl. VAT). Use 0 with Tibber if it already includes this."
         }
       },
+      "reconfigure": {
+        "title": "Heat Planner",
+        "description": "Change the name, electricity price, who lives here and the weather forecast. Rooms, contract and alerts are changed under Configure.",
+        "data": {
+          "name": "Name",
+          "price_source": "Electricity price",
+          "presence_entities": "Who lives here",
+          "weather_entity": "Weather forecast",
+          "price_extra": "Grid tariff and fees per kWh"
+        },
+        "data_description": {
+          "price_source": "Spot prices decide when it pays to heat. Nord Pool is free and needs no account; Tibber customers can use Tibber.",
+          "presence_entities": "When none of them are home, the heat is lowered until the afternoon. Needs the Home Assistant app on each phone.",
+          "weather_entity": "The outdoor temperature makes the expected room temperature more accurate.",
+          "price_extra": "Only used to estimate cost. Around 0.45 kr in Norway (grid energy charge + electricity tax incl. VAT). Use 0 with Tibber if it already includes this."
+        }
+      },
       "price_sensor": {
         "title": "Price sensor",
         "data": {
@@ -127,7 +144,9 @@
         }
       }
     },
-    "abort": {},
+    "abort": {
+      "reconfigure_successful": "The home was updated."
+    },
     "error": {
       "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
       "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
@@ -509,6 +528,9 @@
     },
     "date_required": {
       "message": "A date is required when scope is date."
+    },
+    "entry_not_loaded": {
+      "message": "The Heat Planner home {entry_id} is not loaded."
     }
   },
   "services": {
@@ -573,6 +595,20 @@
           "description": "Only needed with several homes"
         }
       }
+    }
+  },
+  "issues": {
+    "price_unavailable": {
+      "title": "{title}: no electricity prices",
+      "description": "Heat Planner has had no price for the current hour from {source} for several hours, so it heats by the schedule only and cannot save money.\n\nCheck that the price integration is working (Settings → Devices & services). If you use Tibber, its login may have expired: open the Tibber integration and re-authenticate. This message disappears by itself when prices are back."
+    },
+    "house_meter_unavailable": {
+      "title": "{title}: whole-house power meter unavailable",
+      "description": "The whole-house power meter {entity} has been unavailable for more than an hour. Without it Heat Planner cannot keep the monthly power peak low and only counts the heaters' own load.\n\nIf the meter is a Tibber Pulse, the Tibber login has probably expired: open the Tibber integration under Settings → Devices & services and re-authenticate. For a HAN/AMS reader, check that it is online. You can also remove the meter under Configure → Electricity contract and capacity tariff."
+    },
+    "recorder_missing": {
+      "title": "{title}: history is not available",
+      "description": "Learn from history is turned on, but the Recorder integration is not running, so Heat Planner cannot learn how fast the rooms heat and cool, or when people come home.\n\nEnable the recorder (it is part of default_config), or turn off Learn from history under Configure → Learn from history."
     }
   }
 }

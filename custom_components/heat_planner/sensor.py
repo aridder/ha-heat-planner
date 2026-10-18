@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
-from homeassistant.const import PERCENTAGE, UnitOfPower, UnitOfTemperature
+from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
+from homeassistant.const import PERCENTAGE, EntityCategory, UnitOfPower, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import HeatPlannerConfigEntry
+from .coordinator import HeatPlannerCoordinator
 from .energy import peak_from_options
-from .entity import HeatPlannerEntity
+from .entity import HeatPlannerEntity, HeatPlannerZoneEntity
 from .insights import savings_value
-from .planner import LEVEL_CHEAP, LEVEL_EXPENSIVE, LEVEL_EXTREME, LEVEL_NORMAL, MODE_PERCENT
+from .planner import LEVEL_CHEAP, LEVEL_EXPENSIVE, LEVEL_EXTREME, LEVEL_NORMAL, MODE_PERCENT, classify_prices
+
+# Entities only read the coordinator; nothing to throttle.
+PARALLEL_UPDATES = 0
 
 MODES = ["comfort", "setback", "preheat", "save", "off", "away", "normal", "manual", "disabled"]
 
@@ -52,8 +53,8 @@ async def async_setup_entry(
     async_add_entities(entities)
 
 
-class TargetSensor(HeatPlannerEntity, SensorEntity):
-    def __init__(self, coord, zone_id: str, percent: bool) -> None:
+class TargetSensor(HeatPlannerZoneEntity, SensorEntity):
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str, percent: bool) -> None:
         super().__init__(coord, zone_id, "target")
         self._percent = percent
         if percent:
@@ -89,11 +90,11 @@ class TargetSensor(HeatPlannerEntity, SensorEntity):
         }
 
 
-class ModeSensor(HeatPlannerEntity, SensorEntity):
+class ModeSensor(HeatPlannerZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = MODES
 
-    def __init__(self, coord, zone_id: str) -> None:
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "mode")
 
     @property
@@ -115,12 +116,12 @@ class ModeSensor(HeatPlannerEntity, SensorEntity):
         }
 
 
-class PredictedSensor(HeatPlannerEntity, SensorEntity):
+class PredictedSensor(HeatPlannerZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_native_unit_of_measurement = UnitOfTemperature.CELSIUS
     _attr_suggested_display_precision = 1
 
-    def __init__(self, coord, zone_id: str) -> None:
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "predicted")
 
     @property
@@ -144,7 +145,7 @@ class PredictedSensor(HeatPlannerEntity, SensorEntity):
         }
 
 
-class _CostBase(HeatPlannerEntity, SensorEntity):
+class _CostBase(HeatPlannerZoneEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_suggested_display_precision = 2
 
@@ -160,7 +161,7 @@ class _CostBase(HeatPlannerEntity, SensorEntity):
 
 
 class CostSensor(_CostBase):
-    def __init__(self, coord, zone_id: str) -> None:
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "cost_24h")
 
     @property
@@ -168,10 +169,11 @@ class CostSensor(_CostBase):
         plan = self.plan
         if not plan or plan.cost is None:
             return None
-        hours = plan.hours[:24]
-        if any(h.cost is None for h in hours):
+        costs = [h.cost for h in plan.hours[:24]]
+        if any(c is None for c in costs):
             return None
-        return round(sum(h.cost for h in hours) + sum(h.kwh for h in hours) * self._extra(), 2)
+        total = sum(c for c in costs if c is not None)
+        return round(total + sum(h.kwh for h in plan.hours[:24]) * self._extra(), 2)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -181,7 +183,7 @@ class CostSensor(_CostBase):
 
 
 class SavingsSensor(_CostBase):
-    def __init__(self, coord, zone_id: str) -> None:
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "savings_24h")
 
     @property
@@ -197,13 +199,11 @@ class PriceLevelSensor(HeatPlannerEntity, SensorEntity):
     _attr_device_class = SensorDeviceClass.ENUM
     _attr_options = [LEVEL_CHEAP, LEVEL_NORMAL, LEVEL_EXPENSIVE, LEVEL_EXTREME]
 
-    def __init__(self, coord) -> None:
-        super().__init__(coord, None, "price_level")
+    def __init__(self, coord: HeatPlannerCoordinator) -> None:
+        super().__init__(coord, "price_level")
 
     @property
     def native_value(self) -> str | None:
-        from .planner import classify_prices
-
         now = dt_util.now().replace(minute=0, second=0, microsecond=0)
         levels = classify_prices(self.coordinator.price_hours, self.coordinator.rules())
         return levels.get(now)
@@ -228,8 +228,8 @@ class EffectivePriceSensor(HeatPlannerEntity, SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_suggested_display_precision = 2
 
-    def __init__(self, coord) -> None:
-        super().__init__(coord, None, "effective_price")
+    def __init__(self, coord: HeatPlannerCoordinator) -> None:
+        super().__init__(coord, "effective_price")
 
     @property
     def native_unit_of_measurement(self) -> str | None:
@@ -254,8 +254,8 @@ class RealisedSavingsSensor(HeatPlannerEntity, SensorEntity):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_suggested_display_precision = 2
 
-    def __init__(self, coord, period: str) -> None:
-        super().__init__(coord, None, "savings_month" if period == "month" else "savings_today")
+    def __init__(self, coord: HeatPlannerCoordinator, period: str) -> None:
+        super().__init__(coord, "savings_month" if period == "month" else "savings_today")
         self._period = period
 
     @property
@@ -263,7 +263,7 @@ class RealisedSavingsSensor(HeatPlannerEntity, SensorEntity):
         return self.coordinator.hass.config.currency
 
     @property
-    def last_reset(self):
+    def last_reset(self) -> datetime:
         now = dt_util.now()
         start = dt_util.start_of_local_day(now)
         return start.replace(day=1) if self._period == "month" else start
@@ -288,8 +288,8 @@ class _PeakBase(HeatPlannerEntity, SensorEntity):
 class CapacityStepSensor(_PeakBase):
     """The month's capacity-tariff step (e.g. "5–10 kW")."""
 
-    def __init__(self, coord) -> None:
-        super().__init__(coord, None, "capacity_step")
+    def __init__(self, coord: HeatPlannerCoordinator) -> None:
+        super().__init__(coord, "capacity_step")
 
     @property
     def native_value(self) -> str | None:
@@ -312,13 +312,14 @@ class CapacityStepSensor(_PeakBase):
 class MonthPeakAverageSensor(_PeakBase):
     """Average of the month's three highest daily peaks – what the capacity step is based on."""
 
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
     _attr_device_class = SensorDeviceClass.POWER
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_suggested_display_precision = 2
 
-    def __init__(self, coord) -> None:
-        super().__init__(coord, None, "month_peak_average")
+    def __init__(self, coord: HeatPlannerCoordinator) -> None:
+        super().__init__(coord, "month_peak_average")
 
     @property
     def native_value(self) -> float | None:
@@ -334,8 +335,8 @@ class PeakHeadroomSensor(_PeakBase):
     _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
     _attr_suggested_display_precision = 2
 
-    def __init__(self, coord) -> None:
-        super().__init__(coord, None, "peak_headroom")
+    def __init__(self, coord: HeatPlannerCoordinator) -> None:
+        super().__init__(coord, "peak_headroom")
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

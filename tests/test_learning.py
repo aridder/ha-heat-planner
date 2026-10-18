@@ -3,15 +3,13 @@
 from datetime import timedelta
 
 from freezegun.api import FrozenDateTimeFactory
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.heat_planner.const import DOMAIN
-
-import pytest
 
 from .test_integration import _entry, setup_states  # noqa: F401
 
@@ -19,7 +17,7 @@ from .test_integration import _entry, setup_states  # noqa: F401
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(recorder_mock, enable_custom_integrations):
     """The recorder must start before hass in these tests."""
-    yield
+    return
 
 
 async def test_learns_heater_power_with_consent(

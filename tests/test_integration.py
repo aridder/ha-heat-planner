@@ -4,16 +4,12 @@ from datetime import timedelta
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
-import pytest
-
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
-    MockConfigEntry,
-    async_mock_service,
-)
+import pytest
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.heat_planner.const import DOMAIN
 
@@ -129,9 +125,9 @@ async def test_setup_plans_and_controls(hass: HomeAssistant, setup_states, freez
     assert set_number and set_number[-1].data["value"] == 25  # bad: 40 - 15
 
     states = {s.entity_id: s.state for s in hass.states.async_all() if s.domain in ("sensor", "switch", "number", "select")}
-    target = next(k for k in states if k.startswith("sensor.stue") and "target" in k or k == "sensor.stue_mal")
+    target = next(k for k in states if (k.startswith("sensor.stue") and "target" in k) or k == "sensor.stue_mal")
     assert float(states[target]) == 20.0
-    assert any(v == "save" for k, v in states.items() if k.startswith("sensor.stue") and "mode" in k or k == "sensor.stue_modus")
+    assert any(v == "save" for k, v in states.items() if (k.startswith("sensor.stue") and "mode" in k) or k == "sensor.stue_modus")
     level = hass.states.get(next(k for k in states if "price_level" in k or "prisniva" in k))
     assert level.state == "expensive"
 

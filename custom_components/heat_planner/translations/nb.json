@@ -18,6 +18,23 @@
           "price_extra": "Brukes bare til å anslå kostnad. Rundt 0,45 kr i Norge (energiledd i nettleien + elavgift inkl. mva). Bruk 0 hvis prisskilden allerede inkluderer dette."
         }
       },
+      "reconfigure": {
+        "title": "Heat Planner",
+        "description": "Endre navn, strømpris, hvem som bor her og værvarsel. Rom, strømavtale og varsler endres under Konfigurer.",
+        "data": {
+          "name": "Navn",
+          "price_source": "Strømpris",
+          "presence_entities": "Hvem som bor her",
+          "weather_entity": "Værvarsel",
+          "price_extra": "Nettleie og avgifter per kWh"
+        },
+        "data_description": {
+          "price_source": "Spotprisen avgjør når det lønner seg å varme. Nord Pool er gratis og krever ingen konto. Tibber-kunder kan bruke Tibber.",
+          "presence_entities": "Når ingen av dem er hjemme, senkes varmen fram til ettermiddagen. Krever Home Assistant-appen på telefonen.",
+          "weather_entity": "Utetemperaturen gjør forventet romtemperatur mer presis.",
+          "price_extra": "Brukes bare til å anslå kostnad. Rundt 0,45 kr i Norge (energiledd i nettleien + elavgift inkl. mva). Bruk 0 hvis prisskilden allerede inkluderer dette."
+        }
+      },
       "price_sensor": {
         "title": "Prissensor",
         "data": {
@@ -127,7 +144,9 @@
         }
       }
     },
-    "abort": {},
+    "abort": {
+      "reconfigure_successful": "Hjemmet ble oppdatert."
+    },
     "error": {
       "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
       "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
@@ -509,6 +528,9 @@
     },
     "date_required": {
       "message": "Dato må oppgis når omfanget er én dato."
+    },
+    "entry_not_loaded": {
+      "message": "Heat Planner-hjemmet {entry_id} er ikke lastet."
     }
   },
   "services": {
@@ -573,6 +595,20 @@
           "description": "Trengs bare med flere hjem"
         }
       }
+    }
+  },
+  "issues": {
+    "price_unavailable": {
+      "title": "{title}: ingen strømpriser",
+      "description": "Heat Planner har ikke fått pris for denne timen fra {source} på flere timer, så den varmer bare etter tidsplanen og kan ikke spare penger.\n\nSjekk at prisintegrasjonen virker (Innstillinger → Enheter og tjenester). Bruker du Tibber, kan innloggingen ha gått ut: åpne Tibber-integrasjonen og logg inn på nytt. Meldingen forsvinner av seg selv når prisene er tilbake."
+    },
+    "house_meter_unavailable": {
+      "title": "{title}: strømmåleren for huset er utilgjengelig",
+      "description": "Strømmåleren for hele huset, {entity}, har vært utilgjengelig i over en time. Uten den kan ikke Heat Planner holde månedens effekttopp nede, og teller bare ovnenes egen last.\n\nEr måleren en Tibber Pulse, har trolig Tibber-innloggingen gått ut: åpne Tibber-integrasjonen under Innstillinger → Enheter og tjenester og logg inn på nytt. For en HAN/AMS-leser, sjekk at den er på nett. Du kan også fjerne måleren under Konfigurer → Strømavtale og effekttariff."
+    },
+    "recorder_missing": {
+      "title": "{title}: historikk er ikke tilgjengelig",
+      "description": "Lær av historikk er slått på, men Recorder-integrasjonen kjører ikke, så Heat Planner kan ikke lære hvor fort rommene varmes opp og kjøles ned, eller når folk kommer hjem.\n\nSlå på recorder (den er en del av default_config), eller slå av Lær av historikk under Konfigurer → Lær av historikk."
     }
   }
 }
