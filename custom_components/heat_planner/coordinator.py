@@ -48,8 +48,7 @@ from .energy import (
     async_house_hourly_kwh,
     apply_cuts,
     base_load,
-    heaters_only_caps,
-    house_meter,
+        house_meter,
     limit,
     peak_from_options,
     plan_caps,
@@ -69,8 +68,8 @@ from .planner import (
     Plan,
     PriceRules,
     ThermalModel,
-    R_PROTECTED,
     ZoneConfig,
+    is_protected,
     build_plan,
     classify_prices,
     default_schedule,
@@ -122,6 +121,10 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._house_kwh: dict[datetime, float] = {}
         self._house_fetched: datetime | None = None
         self._shed: dict[str, datetime] = {}
+        self._meter_last: tuple[datetime, float] | None = None
+        self._meter_hour: datetime | None = None
+        self._hour_kwh = 0.0
+        self._guard_at: datetime | None = None
         self._outdoor_fetched: datetime | None = None
         self._applied: dict[str, dict[str, Any]] = {}
         self._safety: dict[str, bool] = {}
@@ -298,7 +301,10 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _meter_changed(self, event: Event) -> None:
         now = dt_util.now()
-        if getattr(self, "_guard_at", None) and now - self._guard_at < timedelta(seconds=60):
+        if self._guard_at and now - self._guard_at < timedelta(seconds=60):
+            kw = self._meter_kw()
+            if kw is not None:
+                self._track_energy(kw, now)
             return
         self._guard_at = now
         before = set(self._shed)
@@ -455,70 +461,131 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return self._house_kwh
 
     async def _limit_peaks(self) -> None:
-        """Spread heating between rooms so the month's capacity step holds."""
+        """Spread heating between rooms so the month's capacity step holds.
+
+        Needs a whole-house meter. Cuts are re-planned (recovery hours included)
+        and repeated a few rounds; if they do not lower the house peak they are
+        dropped again, so comfort is never traded for nothing.
+        """
         cfg = peak_from_options(self.options)
         if cfg is None or not self.plans:
             self.peak_state = None
             return
         hours = sorted({h.start for p in self.plans.values() for h in p.hours})
-        if not hours:
-            return
         hourly = await self._house_history()
-        if hourly:
-            caps, state = plan_caps(cfg, hourly, hours, dt_util.now())
-            base = base_load(hourly, heating_share=0.0)
-            # the history already contains today's heating; only the rest of the house is "base"
-            heat_now = sum(p.hours[0].kwh for p in self.plans.values() if p.hours)
-            base = {h: max(0.0, v - heat_now * 0.5) for h, v in base.items()}
-        else:
-            caps, state = heaters_only_caps(cfg, hours)
-            base = {}
+        if not hours or not hourly:
+            self.peak_state = None
+            return
+        caps, state = plan_caps(cfg, hourly, hours, dt_util.now())
         zones = {zid: self.zone(zid) for zid in self.plans}
-        priority = {
-            z[CONF_ZONE_ID]: int(z.get("priority", 0) or 0) for z in self.zone_configs
-        }
-        cuts = limit(zones, self.plans, caps, base, priority)
-        for zid, zc in cuts.items():
-            zone = zones[zid]
-            try:
-                self.plans[zid] = self.plan_zone(
-                    zid, zone=zone, adjust=lambda slots, z=zone, c=zc: apply_cuts(z, slots, c)
-                )
-            except Exception:  # noqa: BLE001
-                _LOGGER.exception("Could not apply peak limits to %s", zid)
+        # rest of the house: low estimate of total use minus a stable estimate of heating
+        heating_avg = sum(
+            sum(h.kwh for h in p.hours) / max(len(p.hours), 1) for p in self.plans.values()
+        )
+        base = {h: max(0.0, v - heating_avg) for h, v in base_load(hourly).items()}
+        priority = {z[CONF_ZONE_ID]: int(z.get("priority", 0) or 0) for z in self.zone_configs}
+
+        def day_peaks(plans: dict[str, Plan]) -> dict[Any, float]:
+            """Highest house load per day relative to that hour's cap (what the tariff counts)."""
+            load: dict[datetime, float] = {}
+            for p in plans.values():
+                for h in p.hours:
+                    load[h.start] = load.get(h.start, 0.0) + h.kwh
+            out: dict[Any, float] = {}
+            for h, v in load.items():
+                over = v + base.get(h.hour, 0.0) - caps.get(h, 1e9)
+                out[h.date()] = max(out.get(h.date(), -1e9), over)
+            return out
+
+        def replan(cuts_by_zone: dict[str, dict[datetime, float]]) -> dict[str, Plan]:
+            out = dict(original)
+            for zid, acc in cuts_by_zone.items():
+                if not acc:
+                    continue
+                zone = zones[zid]
+                pred = {h.start: h.predicted for h in original[zid].hours if h.predicted is not None}
+                try:
+                    out[zid] = self.plan_zone(
+                        zid, zone=zone,
+                        adjust=lambda slots, z=zone, c=dict(acc), p=pred: apply_cuts(z, slots, c, p),
+                    )
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Could not apply peak limits to %s", zid)
+            return out
+
+        original = dict(self.plans)
+        current = dict(self.plans)
+        total: dict[str, dict[datetime, float]] = {}
+        for _ in range(4):
+            cuts = limit(zones, current, caps, base, priority)
+            if not cuts:
+                break
+            for zid, zc in cuts.items():
+                acc = total.setdefault(zid, {})
+                for h, v in zc.items():
+                    acc[h] = acc.get(h, 0.0) + v
+            current = replan(total)
+        if total:
+            # keep cuts only on days where they actually lower that day's peak –
+            # cutting hours on a day whose peak is set elsewhere costs comfort for nothing
+            before, after = day_peaks(original), day_peaks(current)
+            useful = {d for d in after if after[d] < before.get(d, 0.0) - 0.05 and before.get(d, 0.0) > 0}
+            kept = {z: {h: v for h, v in acc.items() if h.date() in useful} for z, acc in total.items()}
+            if kept != total:
+                current = replan(kept) if any(kept.values()) else original
+        self.plans = current
         state.shed = sorted(self._shed)
         self.peak_state = state
 
-    def _realtime_guard(self) -> None:
-        """Live whole-house power above the cap → set back low-priority rooms for a while."""
+    def _track_energy(self, kw: float, now: datetime) -> None:
+        """Integrate live whole-house power into energy for the current clock hour."""
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        last = self._meter_last
+        if self._meter_hour != hour:
+            self._meter_hour = hour
+            self._hour_kwh = 0.0
+            if last is not None and now - last[0] < timedelta(minutes=10):
+                self._hour_kwh = last[1] * (now - hour).total_seconds() / 3600
+        elif last is not None:
+            self._hour_kwh += last[1] * (now - last[0]).total_seconds() / 3600
+        self._meter_last = (now, kw)
+
+    def _meter_kw(self) -> float | None:
         meter = house_meter(self.options)
-        state = self.peak_state
-        if not meter or state is None or state.cap_kw is None:
-            self._shed.clear()
-            return
-        st = self.hass.states.get(meter)
+        st = self.hass.states.get(meter) if meter else None
         kw = _float(st.state) if st else None
         if kw is None:
+            return None
+        return kw / 1000 if (st.attributes.get("unit_of_measurement") or "W") == "W" else kw
+
+    def _realtime_guard(self) -> None:
+        """This hour heading over the cap → set back low-priority rooms until the hour ends."""
+        state = self.peak_state
+        kw = self._meter_kw()
+        if state is None or state.cap_kw is None or kw is None:
+            self._shed.clear()
             return
-        if (st.attributes.get("unit_of_measurement") or "W") == "W":
-            kw /= 1000
         now = dt_util.now()
-        hour = now.replace(minute=0, second=0, microsecond=0)
-        so_far = self._house_kwh.get(hour, 0.0) * (now.minute / 60)
-        projected = so_far + kw * (1 - now.minute / 60)
-        zones = [
-            {
+        self._track_energy(kw, now)
+        left = 1 - (now.minute * 60 + now.second) / 3600
+        projected = self._hour_kwh + kw * left
+        end_of_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        zones = []
+        for zid, p in self.plans.items():
+            if not p.hours:
+                continue
+            zone = self.zone(zid)
+            draw = p.hours[0].duty * zone.heater_kw  # what lowering it actually removes
+            zones.append({
                 "zone_id": zid,
                 "priority": int(next((z.get("priority", 0) for z in self.zone_configs if z[CONF_ZONE_ID] == zid), 0) or 0),
-                "kw": self.heater_kw(zid),
-                "protected": bool(p.hours and R_PROTECTED in p.hours[0].reasons),
-            }
-            for zid, p in self.plans.items()
-        ]
-        held = {z for z, until in self._shed.items() if until > now}
-        shed = set(realtime_shed(projected, state.cap_kw, zones, currently_shed=list(self._shed)))
-        shed |= held  # minimum hold time
-        self._shed = {z: self._shed.get(z, now + timedelta(minutes=10)) for z in shed}
+                "kw": draw * left,  # relief for the rest of this hour (kWh)
+                "protected": is_protected(zone, p.hours[0].start) or draw < 0.05,
+            })
+        self._shed = {z: until for z, until in self._shed.items() if until > now}
+        shed = realtime_shed(projected, state.cap_kw, zones, currently_shed=list(self._shed))
+        # once shed, a room stays set back until the hour ends (no flapping)
+        self._shed = {z: self._shed.get(z, end_of_hour) for z in set(shed) | set(self._shed)}
 
     async def _async_update_data(self) -> dict[str, Any]:
         await self._prices()
@@ -664,8 +731,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         off = hour.target is None or (zone.is_percent and hour.target <= 0)
         value = None if hour.target is None else self._round(hour.target, step)
         if zone_id in self._shed and value is not None and not off:
-            # live capacity guard: briefly lower this room while the house is at its cap
+            # live capacity guard: lower this room for the rest of the hour
             value = self._round(max(zone.min_value, value - (20 if zone.is_percent else 2)), step)
+        if value is not None and not off and not zone.is_percent and value < zone.safety_min_temp:
+            # whatever stacked up (away, price, peak, feedback): never ask for less than the floor
+            value = self._round(zone.safety_min_temp, step)
 
         # Safety floor with hysteresis (needs a room temperature).
         room = self.room_temperature(zone_id)
@@ -769,6 +839,26 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             room_temp=self.room_temperature(zone_id),
         )
         changes = changed_keys(before, after)
+        # Anyone in the house may press these, so keep the effect bounded: at most
+        # 8 nudges a day, comfort within ±2 °C of where it stood that morning and
+        # never at or below the safety floor.
+        today = dt_util.now().date().isoformat()
+        anchor = st.get("feedback_anchor") or {}
+        if anchor.get("date") != today:
+            anchor = {"date": today, "comfort": before.get("comfort"), "count": 0}
+        anchor["count"] = int(anchor.get("count", 0)) + 1
+        st["feedback_anchor"] = anchor
+        if anchor["count"] > 8:
+            await self._save()
+            return (
+                "Det er justert mange ganger i dag – endre innstillingene i planen i stedet."
+                if lang == "nb" else "Adjusted many times today – change the settings in the plan instead."
+            )
+        if "comfort" in changes and not zone.is_percent and anchor.get("comfort") is not None:
+            lo = max(anchor["comfort"] - 2.0, zone.safety_min_temp + 0.5)
+            changes["comfort"] = max(lo, min(anchor["comfort"] + 2.0, float(changes["comfort"])))
+            if changes["comfort"] == before.get("comfort"):
+                changes.pop("comfort")
         delta = changes.pop("schedule_delta", None)
         if delta:
             st["schedule"] = {str(k): v for k, v in shift_schedule(st["schedule"], delta).items()}
@@ -916,7 +1006,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                         **({"away_until_hour": AUTO_HOUR}
                            if st.get("settings", {}).get("away_until_hour") == AUTO_HOUR else {}),
                     },
-                    "thermal": {**asdict(zc.thermal), "quality": model_quality(zc.thermal)},
+                    "thermal": {**asdict(zc.thermal), "quality": {"poor": "uncertain", "unknown": None}.get(model_quality(zc.thermal), model_quality(zc.thermal))},
                     "heater_kw": zc.heater_kw,
                     "heater_kw_source": (
                         "config" if (_float(cfg.get(CONF_HEATER_KW)) or 0) > 0
@@ -942,7 +1032,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "rules": asdict(self.rules()),
             "optimize": self.optimize,
             "features": ["feedback"],
-            "arrival": self._arrival_export(),
+            **({"arrival": self._arrival_export()} if self.options.get(CONF_USE_HISTORY) else {}),
             "tariff": self._tariff_export(),
             "peak": self.peak_state.as_dict() if self.peak_state else None,
             "away": self.away,

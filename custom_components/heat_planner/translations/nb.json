@@ -114,14 +114,16 @@
           "grid_night": "Nettleie natt og helg",
           "extra": "Annen kostnad per kWh",
           "peak_limit": "Hold månedens effekttopp lav (effekttrinn)",
-          "house_power_sensor": "Strømmåler for hele huset (valgfritt)"
+          "house_power_sensor": "Strømmåler for hele huset (valgfritt)",
+          "price_includes_vat": "Prisene inkluderer allerede mva"
         },
         "data_description": {
           "contract": "Spot med strømstøtte: staten dekker 90 % over 77 øre/kWh.",
-          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «egen» for å skrive inn selv.",
+          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «Skriv inn selv» for å skrive inn selv.",
           "extra": "Påslag fra strømleverandør eller annet per kWh.",
-          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn.",
-          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene."
+          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn. Krever strømmåler for hele huset.",
+          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene.",
+          "price_includes_vat": "Tibber og mange HACS-prissensorer gjør det. Nord Pool-integrasjonen i HA gjør det ikke."
         }
       }
     },
@@ -307,14 +309,16 @@
           "grid_night": "Nettleie natt og helg",
           "extra": "Annen kostnad per kWh",
           "peak_limit": "Hold månedens effekttopp lav (effekttrinn)",
-          "house_power_sensor": "Strømmåler for hele huset (valgfritt)"
+          "house_power_sensor": "Strømmåler for hele huset (valgfritt)",
+          "price_includes_vat": "Prisene inkluderer allerede mva"
         },
         "data_description": {
           "contract": "Spot med strømstøtte: staten dekker 90 % over 77 øre/kWh.",
-          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «egen» for å skrive inn selv.",
+          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «Skriv inn selv» for å skrive inn selv.",
           "extra": "Påslag fra strømleverandør eller annet per kWh.",
-          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn.",
-          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene."
+          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn. Krever strømmåler for hele huset.",
+          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene.",
+          "price_includes_vat": "Tibber og mange HACS-prissensorer gjør det. Nord Pool-integrasjonen i HA gjør det ikke."
         }
       }
     },

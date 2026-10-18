@@ -17,7 +17,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
 from .peak import PeakConfig, caps_for_plan, limit_plans, monthly_peaks, top3_average
-from .planner import R_PROTECTED, Plan, PlanHour, ZoneConfig
+from .planner import Plan, PlanHour, ZoneConfig, is_protected
 from .tariff import TariffConfig
 
 _LOGGER = logging.getLogger(__name__)
@@ -38,9 +38,11 @@ def tariff_from_options(options: dict[str, Any]) -> TariffConfig:
         "mode": contract,
         "fixed_price": float(energy.get("fixed_price", 0.5) or 0.0),
         "extra": float(energy.get("extra", 0.0) or 0.0),
-        # Tibber already reports the price incl. taxes and VAT
-        "spot_includes_vat": options.get("price_type") == "tibber",
+        # Tibber (and many HACS price sensors) already report the price incl. VAT
+        "spot_includes_vat": bool(energy.get("price_includes_vat", options.get("price_type") == "tibber")),
     }
+    if options.get("nordpool_area") == "NO4" or energy.get("vat_exempt"):
+        data["vat"] = 0.0  # Northern Norway: no VAT on electricity for households
     if grid == "elvia_2026":
         data["preset"] = "elvia_2026"
     else:
@@ -56,8 +58,9 @@ def tariff_from_options(options: dict[str, Any]) -> TariffConfig:
 
 
 def peak_from_options(options: dict[str, Any]) -> PeakConfig | None:
+    """Capacity-tariff limiting – only with a whole-house meter (it needs the real peaks)."""
     energy = options.get(CONF_ENERGY) or {}
-    if not energy.get("peak_limit"):
+    if not energy.get("peak_limit") or not energy.get("house_power_sensor"):
         return None
     return PeakConfig.from_options({"enabled": True, **(options.get("peak") or {})})
 
@@ -195,7 +198,7 @@ def limit(
             near_floor = h.predicted is not None and h.predicted <= z.safety_min_temp + 0.5
             items.append({
                 "start": h.start, "kw": kw,
-                "protected": R_PROTECTED in h.reasons or h.target is None,
+                "protected": is_protected(z, h.start) or h.target is None,
                 "can_cut_kw": 0.0 if near_floor else kw,
             })
             all_hours.add(h.start)
@@ -205,8 +208,19 @@ def limit(
     return {zid: {h: kw / max(zones[zid].heater_kw, 0.05) for h, kw in hc.items()} for zid, hc in cuts.items()}
 
 
-def apply_cuts(zone: ZoneConfig, slots: list[PlanHour], duty_cuts: dict[datetime, float]) -> bool:
-    """Turn duty reductions into lower targets. Returns True if anything changed."""
+def apply_cuts(
+    zone: ZoneConfig,
+    slots: list[PlanHour],
+    duty_cuts: dict[datetime, float],
+    predicted: dict[datetime, float] | None = None,
+) -> bool:
+    """Turn duty reductions into lower targets. Returns True if anything changed.
+
+    A floor thermostat keeps heating at full power until the room reaches its
+    setpoint, so a cut only removes power if the setpoint goes below where the
+    room would otherwise be. ``predicted`` (from the plan before the cut) is used
+    for that; the safety floor always wins.
+    """
     changed = False
     for s in slots:
         cut = duty_cuts.get(s.start)
@@ -215,8 +229,13 @@ def apply_cuts(zone: ZoneConfig, slots: list[PlanHour], duty_cuts: dict[datetime
         if zone.is_percent:
             new = max(zone.min_value, s.target - round(cut * 100))
         else:
-            # a floor setpoint does not map to duty; lower in half-degree steps
-            new = max(zone.min_value, s.target - (1.0 if cut < 0.5 else 2.0))
+            floor = max(zone.min_value, zone.safety_min_temp)
+            new = s.target - (1.0 if cut < 0.5 else 2.0)
+            pred = (predicted or {}).get(s.start)
+            if pred is not None:
+                # just below where the room will be: the heater idles this hour
+                new = min(new, round((pred - 0.5) * 2) / 2)
+            new = max(floor, new)
         if new < s.target:
             s.target = new
             if s.mode not in ("off",):

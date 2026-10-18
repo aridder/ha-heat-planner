@@ -285,10 +285,12 @@ def energy_defaults(hass: HomeAssistant, opts: dict[str, Any] | None = None) -> 
     d.setdefault("grid_day", 0.364)
     d.setdefault("grid_night", 0.264)
     d.setdefault("extra", float(opts.get(CONF_PRICE_EXTRA) or 0.0) if d["grid"] == "none" else 0.0)
-    d.setdefault("peak_limit", norway)
     meter = _guess_house_meter(hass)
     if meter:
         d.setdefault("house_power_sensor", meter)
+    # capacity-tariff limiting needs the real house peaks
+    d.setdefault("peak_limit", norway and bool(meter))
+    d.setdefault("price_includes_vat", opts.get(CONF_PRICE_TYPE) == PRICE_TIBBER)
     return d
 
 
@@ -306,6 +308,7 @@ def _energy_schema(d: dict[str, Any]) -> vol.Schema:
             vol.Optional("grid_day", default=d["grid_day"]): selector.NumberSelector(money),
             vol.Optional("grid_night", default=d["grid_night"]): selector.NumberSelector(money),
             vol.Optional("extra", default=d["extra"]): selector.NumberSelector(money),
+            vol.Required("price_includes_vat", default=d["price_includes_vat"]): bool,
             vol.Required("peak_limit", default=d["peak_limit"]): bool,
             vol.Optional("house_power_sensor", description={"suggested_value": d.get("house_power_sensor")}): selector.EntitySelector(
                 selector.EntitySelectorConfig(domain="sensor", device_class="power")

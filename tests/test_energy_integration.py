@@ -72,23 +72,46 @@ async def test_optimiser_can_be_switched_off(hass: HomeAssistant, setup_states, 
 
 
 async def test_capacity_limit_spreads_heating(hass: HomeAssistant, setup_states, freezer: FrozenDateTimeFactory) -> None:
-    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=10, minutes=5))
+    from unittest.mock import patch
+
+    now = dt_util.start_of_local_day() + timedelta(hours=10, minutes=5)
+    freezer.move_to(now)
+    hass.states.async_set("sensor.house_power", "2500", {"unit_of_measurement": "W", "device_class": "power"})
     hass.states.async_set("climate.kjokken", "heat", {"temperature": 23, "current_temperature": 20.0, "hvac_modes": ["off", "heat"]})
     hass.states.async_set("climate.stue", "heat", {"temperature": 23, "current_temperature": 20.0, "hvac_modes": ["off", "heat"]})
     zones = [
         {"zone_id": "stue", "name": "Stue", "mode": "setpoint", "climate_entity": "climate.stue", "comfort": 23, "heater_kw": 3.0},
         {"zone_id": "kjokken", "name": "Kjøkken", "mode": "setpoint", "climate_entity": "climate.kjokken", "comfort": 23, "heater_kw": 3.0, "priority": 1},
     ]
-    coord = await _setup(hass, _entry({"contract": "fixed", "fixed_price": 0.5, "grid": "none", "peak_limit": True}, zones))
-    state = coord.export()["peak"]
-    assert state is not None and state["cap_kw"] == 3.0 and state["metered"] is False
+    # this month: three days at ~4.5 kWh/h -> step 2–5 kW, cap ≈ 4.7 kW; base load ~1 kW
+    hourly = {}
+    start = now.replace(day=1, hour=0, minute=0)
+    t = start
+    while t < now.replace(minute=0):
+        hourly[t] = 4.5 if t.hour == 18 else 1.0
+        t += timedelta(hours=1)
+    energy = {"contract": "fixed", "fixed_price": 0.5, "grid": "none", "peak_limit": True, "house_power_sensor": "sensor.house_power"}
+    with patch("custom_components.heat_planner.coordinator.async_house_hourly_kwh", return_value=hourly):
+        coord = await _setup(hass, _entry(energy, zones))
+        state = coord.export()["peak"]
+        assert state is not None and state["metered"] is True and state["cap_kw"] < 6
+        # the protected warm-up window (13–15) runs both rooms flat out today, so cuts
+        # elsewhere today cannot lower today's peak and are dropped again
+        today = now.date()
+        assert not any(R_PEAK in h.reasons for h in coord.plans["stue"].hours if h.start.date() == today)
+        # without a protected window the lowest-priority room gives way
+        await coord.async_set_settings("stue", {"protected_from_hour": 0, "protected_to_hour": 0})
+        await coord.async_set_settings("kjokken", {"protected_from_hour": 0, "protected_to_hour": 0})
+        await hass.async_block_till_done()
     stue, kjokken = coord.plans["stue"], coord.plans["kjokken"]
-    # the lower-priority room gives way first
     assert any(R_PEAK in h.reasons for h in stue.hours)
-    first = stue.hours[0].start
-    total = stue.hours[0].kwh + kjokken.hours[0].kwh
-    assert total <= 6.0
-    assert first is not None
+    # never below the safety floor, whatever was cut
+    assert all(h.target is None or h.target >= 18 for p in (stue, kjokken) for h in p.hours)
+
+
+async def test_no_meter_no_peak_limiting(hass: HomeAssistant, setup_states) -> None:
+    coord = await _setup(hass, _entry({"contract": "fixed", "grid": "none", "peak_limit": True}))
+    assert coord.export()["peak"] is None
 
 
 async def test_feedback_and_auto_arrival(hass: HomeAssistant, setup_states, hass_ws_client, freezer: FrozenDateTimeFactory) -> None:
@@ -97,6 +120,7 @@ async def test_feedback_and_auto_arrival(hass: HomeAssistant, setup_states, hass
     client = await hass_ws_client(hass)
     freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=11))
     entry = _entry({"contract": "fixed", "fixed_price": 0.5, "grid": "none", "peak_limit": False})
+    entry = MockConfigEntry(domain=DOMAIN, title="Hjem", data={}, options={**entry.options, "use_history": True})
     coord = await _setup(hass, entry)
     before = coord.zone("stue").comfort
     await client.send_json({"id": 1, "type": f"{DOMAIN}/feedback", "entry_id": entry.entry_id, "zone": "stue", "kind": "too_cold"})
@@ -119,3 +143,14 @@ async def test_feedback_and_auto_arrival(hass: HomeAssistant, setup_states, hass
     exp = coord.export()
     assert exp["arrival"]["expected"] == "16:30"
     assert exp["zones"][0]["settings"]["away_until_hour"] == -1
+
+
+async def test_feedback_is_bounded(hass: HomeAssistant, setup_states, freezer: FrozenDateTimeFactory) -> None:
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=11))
+    coord = await _setup(hass, _entry({"contract": "fixed", "grid": "none", "peak_limit": False}))
+    start = coord.zone("stue").comfort
+    for _ in range(12):
+        freezer.tick(timedelta(minutes=11))
+        await coord.async_feedback("stue", "too_warm")
+    comfort = coord.zone("stue").comfort
+    assert comfort >= start - 2.0 and comfort >= coord.zone("stue").safety_min_temp + 0.5

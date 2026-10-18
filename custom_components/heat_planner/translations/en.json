@@ -114,14 +114,16 @@
           "grid_night": "Grid tariff night and weekend",
           "extra": "Other cost per kWh",
           "peak_limit": "Keep the monthly peak low (capacity tariff)",
-          "house_power_sensor": "Whole-house power meter (optional)"
+          "house_power_sensor": "Whole-house power meter (optional)",
+          "price_includes_vat": "Price source already includes VAT"
         },
         "data_description": {
           "contract": "Spot with support: the state pays 90 % above 77 øre/kWh (Norway).",
           "grid": "Elvia 2026: 36.40 øre day, 26.40 øre night/weekend. Choose custom to enter your own.",
           "extra": "Supplier mark-up or anything else per kWh.",
-          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step.",
-          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted."
+          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step. Needs a whole-house power meter.",
+          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted.",
+          "price_includes_vat": "Tibber and many HACS price sensors do. Core Nord Pool does not."
         }
       }
     },
@@ -307,14 +309,16 @@
           "grid_night": "Grid tariff night and weekend",
           "extra": "Other cost per kWh",
           "peak_limit": "Keep the monthly peak low (capacity tariff)",
-          "house_power_sensor": "Whole-house power meter (optional)"
+          "house_power_sensor": "Whole-house power meter (optional)",
+          "price_includes_vat": "Price source already includes VAT"
         },
         "data_description": {
           "contract": "Spot with support: the state pays 90 % above 77 øre/kWh (Norway).",
           "grid": "Elvia 2026: 36.40 øre day, 26.40 øre night/weekend. Choose custom to enter your own.",
           "extra": "Supplier mark-up or anything else per kWh.",
-          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step.",
-          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted."
+          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step. Needs a whole-house power meter.",
+          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted.",
+          "price_includes_vat": "Tibber and many HACS price sensors do. Core Nord Pool does not."
         }
       }
     },
