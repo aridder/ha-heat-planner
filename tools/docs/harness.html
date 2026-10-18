@@ -18,15 +18,29 @@ const LANG = Q.get("lang") || "en";
 if (Q.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
 const MOCK = window.__MOCK;  // injected by shoot.py
 const entry = MOCK.entries[0];
+// Test states (?state=…): loading, error, empty, nozones, stale, unavailable
+const STATE = Q.get("state") || "";
+if (STATE === "stale") entry.updated = new Date(Date.now() - 3 * 3600e3).toISOString();
+const entries = STATE === "empty" ? [] : STATE === "nozones" ? [{ ...entry, zones: [] }] : [entry];
 const zoneById = Object.fromEntries(entry.zones.map((z) => [z.zone_id, z]));
+const states = {};
+for (const z of entry.zones) states[z.climate_entity] = { entity_id: z.climate_entity, state: "heat", attributes: {} };
+if (STATE === "unavailable") states[entry.zones[0].climate_entity].state = "unavailable";
 window.__sent = [];
 const hass = {
-  language: LANG, locale: { language: LANG }, config: { time_zone: "Europe/Oslo", currency: "NOK" },
+  language: LANG, locale: { language: LANG, number_format: "language", time_format: Q.get("h12") ? "12" : "24" },
+  config: { time_zone: "Europe/Oslo", currency: "NOK" }, states,
   connection: {
-    subscribeMessage(cb) { setTimeout(() => cb({ entries: [entry] }), 10); return Promise.resolve(() => {}); },
+    subscribeMessage(cb) {
+      if (STATE === "loading") return new Promise(() => {});
+      if (STATE === "error") return Promise.reject({ code: "home_assistant_error", message: "Entry not loaded" });
+      setTimeout(() => cb({ entries }), 10);
+      window.__push = () => cb({ entries: [{ ...entry, updated: new Date().toISOString() }] });
+      return Promise.resolve(() => { window.__unsubscribed = (window.__unsubscribed || 0) + 1; });
+    },
     sendMessagePromise(msg) {
       window.__sent.push(msg);
-      if (msg.type === "heat_planner/get") return Promise.resolve({ entries: [entry] });
+      if (msg.type === "heat_planner/get") return Promise.resolve({ entries });
       if (msg.type === "heat_planner/feedback") return Promise.resolve({ message: MOCK.feedback_message || "" });
       return Promise.resolve({});
     },
@@ -34,9 +48,44 @@ const hass = {
   callWS(msg) {
     window.__sent.push(msg);
     if (msg.type === "heat_planner/preview") return Promise.resolve(zoneById[msg.zone_id].plan);
-    return Promise.resolve({ entries: [entry] });
+    return Promise.resolve(entry);  // save/settings answer with the entry's export, like the integration
   },
 };
+</script>
+<script>
+// Minimal <ha-form> stand-in for the card editor: one control per schema item, value-changed like HA's.
+if (Q.get("editor")) customElements.define("ha-form", class extends HTMLElement {
+  set schema(s) { this._s = s; this._r(); } set data(d) { this._d = d; this._r(); } set hass(h) { this._h = h; }
+  _emit(patch) { this._d = { ...this._d, ...patch }; this.dispatchEvent(new CustomEvent("value-changed", { detail: { value: this._d }, bubbles: true, composed: true })); }
+  _r() {
+    if (!this._s || !this._d) return;
+    this.innerHTML = "";
+    for (const s of this._s) {
+      const lab = document.createElement("label"); lab.style.cssText = "display:block;margin:8px 0;font:14px system-ui"; lab.dataset.name = s.name;
+      lab.append((this.computeLabel?.(s) || s.name) + " ");
+      const sel = s.selector;
+      if (sel.select && sel.select.multiple) {
+        for (const o of sel.select.options) {
+          const c = document.createElement("input"); c.type = "checkbox"; c.value = o.value; c.checked = (this._d[s.name] || []).includes(o.value);
+          c.onchange = () => this._emit({ [s.name]: [...this.querySelectorAll(`[data-name=${s.name}] input:checked`)].map((x) => x.value) });
+          const l = document.createElement("span"); l.append(c, o.label + " "); lab.append(l);
+        }
+      } else if (sel.select) {
+        const x = document.createElement("select");
+        for (const o of sel.select.options) x.append(new Option(o.label, o.value, false, o.value === this._d[s.name]));
+        x.onchange = () => this._emit({ [s.name]: x.value }); lab.append(x);
+      } else if (sel.number) {
+        const x = document.createElement("input"); x.type = "range"; x.min = sel.number.min; x.max = sel.number.max; x.value = this._d[s.name];
+        x.onchange = () => this._emit({ [s.name]: +x.value }); lab.append(x);
+      } else if (sel.boolean) {
+        const x = document.createElement("input"); x.type = "checkbox"; x.checked = !!this._d[s.name];
+        x.onchange = () => this._emit({ [s.name]: x.checked }); lab.append(x);
+      }
+      const help = this.computeHelper?.(s); if (help) { const h = document.createElement("small"); h.textContent = " " + help; lab.append(h); }
+      this.append(lab);
+    }
+  }
+});
 </script>
 <script>
 // Minimal <ha-icon> stand-in: the Material Design Icons (Apache 2.0, @mdi/js 7.4.47) the guide uses.
@@ -75,9 +124,16 @@ if (Q.get("help")) {
   h.setConfig({ language: LANG });
   root.append(h);
   h.hass = hass;
+} else if (Q.get("editor")) {
+  const ed = document.createElement("heat-planner-card-editor");
+  window.__configs = [];
+  ed.addEventListener("config-changed", (ev) => window.__configs.push(ev.detail.config));
+  ed.setConfig({ type: "custom:heat-planner-card" });
+  ed.hass = hass;
+  root.append(ed);
 } else {
   const c = document.createElement("heat-planner-card");
-  c.setConfig({});
+  c.setConfig(JSON.parse(Q.get("config") || "{}"));
   root.append(c);
   c.hass = hass;
 }
