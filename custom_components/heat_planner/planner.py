@@ -12,8 +12,11 @@ a predicted room temperature and an estimated cost.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from bisect import bisect_left, bisect_right
+from collections import deque
+from dataclasses import dataclass, field, asdict, replace
 from datetime import date, datetime, timedelta
+from math import ceil, sqrt
 from statistics import median
 from typing import Iterable
 
@@ -400,45 +403,84 @@ def _simulate(
     room_temp: float | None,
     outdoor: dict[datetime, float],
     outdoor_default: float,
+    *,
+    solar: dict[datetime, float] | None = None,
 ) -> None:
-    """Fill predicted temperature, duty, kWh and cost for each slot (in place)."""
+    """Fill predicted temperature, duty, kWh and cost for each slot (in place).
+
+    ``solar`` maps hour starts to a 0..1 solar factor (see ``solar.py``); missing
+    hours count as no sun. The heater's effect is delayed by the model's
+    ``lag_hours`` (dead time of heavy floors): the duty commanded now warms the
+    room ``lag_hours`` later. A setpoint thermostat is assumed to anticipate
+    that delay (it controls on the predicted temperature once the queued heat
+    has arrived), which is how floor-sensor thermostats behave in practice.
+    """
     model = zone.thermal
     temp = room_temp
     substeps = 4
     dt = 1 / substeps
+    gross = model.gross_rate
+    n_lag = max(0, int(round((model.lag_hours or 0.0) / dt)))
+    fifo: deque[float] | None = None  # duty commanded but not yet felt
+
+    def passive(t: float, t_out: float, sol: float) -> float:
+        """°C/h drift without heating (loss never warms a room colder than outside)."""
+        return -max(0.0, (t - t_out) / model.tau_hours) + model.solar_gain * sol
+
+    def hold_duty(t: float, t_out: float, sol: float) -> float:
+        if gross <= 0:
+            return 1.0
+        return _clamp(-passive(t, t_out, sol) / gross, 0.0, 1.0)
+
     for s in slots:
         t_out = outdoor.get(s.start, outdoor_default)
+        sol = (solar or {}).get(s.start, 0.0) or 0.0
         duty_sum = 0.0
         for _ in range(substeps):
             if zone.is_percent:
                 duty = 0.0 if s.target is None else _clamp(s.target / 100.0, 0, 1)
                 if temp is not None:
-                    loss = (temp - t_out) / model.tau_hours
-                    temp += (model.gross_rate * duty - loss) * dt
+                    if fifo is None:
+                        fifo = deque([duty] * n_lag)
+                    fifo.append(duty)
+                    temp = model.step(temp, fifo.popleft(), t_out, dt, sol)
             elif temp is None:
                 # no temperature known: assume the setpoint is held
                 duty = 0.0 if s.target is None else 0.35
             else:
-                loss = max(0.0, (temp - t_out) / model.tau_hours)
-                if s.target is None or temp > s.target + 0.05:
+                if fifo is None:
+                    # assume the thermostat was holding the start temperature
+                    fifo = deque([hold_duty(temp, t_out, sol)] * n_lag)
+                # temperature once the heat already queued has arrived
+                pred = temp
+                for d in fifo:
+                    pred = model.step(pred, d, min(t_out, pred), dt, sol)
+                drift = passive(pred, t_out, sol)
+                hold = hold_duty(pred, t_out, sol)
+                snap: float | None = None
+                if s.target is None or pred > s.target + 0.05:
                     duty = 0.0
-                    temp -= loss * dt
-                elif temp < s.target - 0.05:
-                    rise = model.gross_rate - loss
-                    need = s.target - temp
+                elif pred < s.target - 0.05:
+                    rise = gross + drift
                     if rise <= 0:
                         duty = 1.0
-                        temp += rise * dt
                     else:
                         full = rise * dt
+                        need = s.target - pred
                         frac = _clamp(need / full, 0.0, 1.0) if full > 0 else 1.0
                         # heat for frac of the substep, then hold
-                        hold = loss / model.gross_rate if model.gross_rate > 0 else 1.0
                         duty = frac + (1 - frac) * hold
-                        temp = min(s.target, temp + full)
+                        snap = min(s.target, temp + full)
                 else:
-                    duty = _clamp(loss / model.gross_rate, 0.0, 1.0) if model.gross_rate else 0
-                    temp = s.target
+                    duty = hold
+                    if drift <= 0 and -drift < gross:
+                        snap = s.target
+                fifo.append(duty)
+                applied = fifo.popleft()
+                if n_lag == 0 and snap is not None:
+                    temp = snap  # thermostat holds the target exactly
+                else:
+                    temp = model.step(temp, applied, min(t_out, temp), dt, sol)
             duty_sum += duty
         s.duty = round(duty_sum / substeps, 3)
         s.kwh = round(s.duty * zone.heater_kw, 3)
@@ -448,47 +490,260 @@ def _simulate(
 
 # --------------------------------------------------------------------------- learning
 
+LAG_CANDIDATES: tuple[float, ...] = (0.0, 0.5, 1.0, 1.5, 2.0, 3.0)
+QUIET_HOURS = 3.0  # no heating for this long = no delayed heat still arriving
+QUALITY_GOOD = 0.3  # °C RMSE of 1-hour-ahead predictions
+QUALITY_FAIR = 0.6
+MIN_RMSE_POINTS = 10
+
 
 @dataclass
 class Sample:
-    """One observation used for fitting the thermal model."""
+    """One observation used for fitting the thermal model.
+
+    ``duty`` is the share of the following interval the heater was on (0..1);
+    when unknown, ``heating`` (on/off at ``when``) is used instead. ``solar``
+    is the 0..1 solar factor at ``when`` (see ``solar.py``).
+    """
 
     when: datetime
     room: float
     outdoor: float
     heating: bool
+    solar: float = 0.0
+    duty: float | None = None
+
+    @property
+    def effective_duty(self) -> float:
+        if self.duty is not None:
+            return _clamp(self.duty, 0.0, 1.0)
+        return 1.0 if self.heating else 0.0
 
 
-def fit_thermal(samples: list[Sample], prior: ThermalModel | None = None) -> ThermalModel:
-    """Estimate ``tau_hours`` from cooling periods and ``gross_rate`` from heating periods.
+class _Series:
+    """Time-sorted samples with fast "value at time" lookups."""
 
-    Uses consecutive sample pairs 10–90 minutes apart. Falls back to the prior
-    (or defaults) when there is too little data, and clamps results to
-    physically plausible ranges.
+    def __init__(self, pts: list[Sample]) -> None:
+        self.pts = pts
+        self.ts = [p.when.timestamp() for p in pts]
+
+    def index_at(self, ts: float, tol: float = 3600.0) -> int | None:
+        i = bisect_right(self.ts, ts + 1e-6) - 1
+        if i < 0 or ts - self.ts[i] > tol:
+            return None
+        return i
+
+    def duty_at(self, ts: float) -> float | None:
+        i = self.index_at(ts)
+        return None if i is None else self.pts[i].effective_duty
+
+    def quiet(self, i: int) -> bool:
+        """No heating at sample ``i`` nor in the ``QUIET_HOURS`` before it."""
+        ts = self.ts[i]
+        lo = self.index_at(ts - QUIET_HOURS * 3600)
+        if lo is None:
+            return False
+        return all(self.pts[k].effective_duty < 0.05 for k in range(lo, i + 1))
+
+
+def _pairs(series: _Series) -> list[tuple[int, int, float, float]]:
+    """Consecutive sample pairs 10–90 minutes apart: (i, j, hours, slope °C/h)."""
+    out = []
+    pts = series.pts
+    for i in range(len(pts) - 1):
+        hours = (series.ts[i + 1] - series.ts[i]) / 3600
+        if 1 / 6 <= hours <= 1.5:
+            out.append((i, i + 1, hours, (pts[i + 1].room - pts[i].room) / hours))
+    return out
+
+
+def _one_hour_errors(model: ThermalModel, series: _Series) -> list[float]:
+    """Errors (°C) of 1-hour-ahead predictions started from each sample."""
+    pts, ts = series.pts, series.ts
+    lag_s = (model.lag_hours or 0.0) * 3600
+    errors: list[float] = []
+    for i in range(len(pts)):
+        goal = ts[i] + 3600
+        j = bisect_left(ts, goal - 600, lo=i + 1)
+        if j >= len(pts) or abs(ts[j] - goal) > 600:
+            continue
+        temp = pts[i].room
+        ok = True
+        for k in range(i, j):
+            hours = (ts[k + 1] - ts[k]) / 3600
+            if hours > 1.5:
+                ok = False
+                break
+            duty = series.duty_at(ts[k] - lag_s) if lag_s else pts[k].effective_duty
+            if duty is None:
+                duty = pts[k].effective_duty
+            n = max(1, ceil(hours / 0.25))
+            for _ in range(n):
+                temp = model.step(temp, duty, pts[k].outdoor, hours / n, pts[k].solar)
+        if ok:
+            errors.append(temp - pts[j].room)
+    return errors
+
+
+def model_rmse(model: ThermalModel, samples: list[Sample]) -> float | None:
+    """RMSE (°C) of 1-hour-ahead predictions on ``samples``; None if too few."""
+    series = _Series(sorted(samples, key=lambda s: s.when))
+    errors = _one_hour_errors(model, series)
+    if len(errors) < MIN_RMSE_POINTS:
+        return None
+    return round(sqrt(sum(e * e for e in errors) / len(errors)), 3)
+
+
+def model_quality(model: ThermalModel | None) -> str:
+    """"good" | "fair" | "poor" | "unknown" from the model's fit error."""
+    if model is None or model.rmse is None:
+        return "unknown"
+    if model.rmse < QUALITY_GOOD:
+        return "good"
+    if model.rmse < QUALITY_FAIR:
+        return "fair"
+    return "poor"
+
+
+def _snap_lag(hours: float) -> float:
+    return min(LAG_CANDIDATES, key=lambda c: abs(c - (hours or 0.0)))
+
+
+def blend_models(a: ThermalModel, b: ThermalModel, weight_a: float = 0.5) -> ThermalModel:
+    """Parameter-wise blend of two models (bookkeeping fields from ``a``)."""
+    w = _clamp(weight_a, 0.0, 1.0)
+
+    def mix(x: float, y: float) -> float:
+        return w * x + (1 - w) * y
+
+    return replace(
+        a,
+        gross_rate=round(mix(a.gross_rate, b.gross_rate), 3),
+        tau_hours=round(mix(a.tau_hours, b.tau_hours), 1),
+        solar_gain=round(mix(a.solar_gain, b.solar_gain), 3),
+        lag_hours=round(mix(a.lag_hours or 0.0, b.lag_hours or 0.0) * 2) / 2,
+    )
+
+
+def fit_thermal(
+    samples: list[Sample],
+    prior: ThermalModel | None = None,
+    *,
+    blend_poor: bool = True,
+) -> ThermalModel:
+    """Fit the room model to observed history.
+
+    * ``tau_hours`` from cooling periods (no heating for ``QUIET_HOURS``, sun down;
+      relaxed step by step when there are too few),
+    * ``solar_gain`` from quiet daytime periods: warming beyond the cooling
+      model, regressed on the solar factor (°C/h at factor 1, 0..1.5),
+    * ``lag_hours`` (dead time) as the candidate in ``LAG_CANDIDATES`` that best
+      explains the room around heating switches (needs ≥ 3 onsets),
+    * ``gross_rate`` from heating periods given the chosen lag,
+    * ``rmse`` of 1-hour-ahead predictions on the samples.
+
+    Falls back to the prior (or defaults) per parameter when there is too
+    little data, clamps everything to plausible ranges, and if the fit is still
+    poor (see :func:`model_quality`) blends it 50/50 with the prior, keeping the
+    measured ``rmse`` so the UI can show low confidence.
     """
     prior = prior or ThermalModel()
-    taus: list[float] = []
-    gross: list[float] = []
     pts = sorted(samples, key=lambda s: s.when)
-    for a, b in zip(pts, pts[1:]):
-        hours = (b.when - a.when).total_seconds() / 3600
-        if not (1 / 6 <= hours <= 1.5):
-            continue
-        slope = (b.room - a.room) / hours
-        diff = a.room - a.outdoor
-        if diff < 3:
-            continue
-        if not a.heating and slope < 0:
-            taus.append(diff / -slope)
-        elif a.heating and slope > 0:
-            gross.append(slope + diff / (taus and median(taus) or prior.tau_hours))
-    tau = median(taus) if len(taus) >= 6 else prior.tau_hours
-    tau = _clamp(tau, 8.0, 150.0)
-    g = median(gross) if len(gross) >= 6 else prior.gross_rate
-    g = _clamp(g, 0.2, 4.0)
-    return ThermalModel(
+    series = _Series(pts)
+    pairs = _pairs(series)
+
+    def diff(i: int) -> float:
+        return pts[i].room - pts[i].outdoor
+
+    def sun(i: int, j: int) -> float:
+        return (pts[i].solar + pts[j].solar) / 2
+
+    # --- tau: free cooling
+    taus: list[float] = []
+    quiet = [series.quiet(i) for i in range(len(pts))]
+    for cond in (
+        lambda i: quiet[i] and pts[i].solar < 0.05,
+        lambda i: pts[i].effective_duty < 0.05 and pts[i].solar < 0.05,
+        lambda i: pts[i].effective_duty < 0.05,
+    ):
+        taus = [diff(i) / -slope for i, _, _, slope in pairs if cond(i) and slope < 0 and diff(i) >= 3]
+        if len(taus) >= 6:
+            break
+    tau_ok = len(taus) >= 6
+    tau = _clamp(median(taus) if tau_ok else prior.tau_hours, 8.0, 150.0)
+
+    # --- solar gain: quiet daytime warming beyond the cooling model
+    sx = sxy = 0.0
+    n_sol = 0
+    for i, j, _, slope in pairs:
+        s = sun(i, j)
+        if quiet[i] and s >= 0.1:
+            resid = slope + diff(i) / tau
+            sx += s * s
+            sxy += s * resid
+            n_sol += 1
+    sol_ok = n_sol >= 8 and sx > 0
+    gain = _clamp(sxy / sx if sol_ok else prior.solar_gain, 0.0, 1.5)
+
+    # --- lag and gross rate: what is left is the heater's (delayed) effect
+    resid = [
+        (i, slope + diff(i) / tau - gain * sun(i, j)) for i, j, _, slope in pairs
+    ]
+
+    def gross_for(lag: float) -> tuple[float | None, list[tuple[int, float, float]]]:
+        rows = []
+        for i, y in resid:
+            d = series.duty_at(series.ts[i] - lag * 3600) if lag else pts[i].effective_duty
+            if d is not None:
+                rows.append((i, d, y))
+        ratios = [y / d for _, d, y in rows if d >= 0.5]
+        return (median(ratios) if len(ratios) >= 6 else None), rows
+
+    # heating switches (on/off) and the pairs right after them
+    switches: list[float] = []
+    onsets = 0
+    for k in range(1, len(pts)):
+        a, b = pts[k - 1].effective_duty, pts[k].effective_duty
+        if abs(b - a) >= 0.5 and series.ts[k] - series.ts[k - 1] <= 3600:
+            switches.append(series.ts[k])
+            onsets += b > a
+    window_s = (max(LAG_CANDIDATES) + 1) * 3600
+
+    def near_switch(i: int) -> bool:
+        k = bisect_right(switches, series.ts[i]) - 1
+        return k >= 0 and series.ts[i] - switches[k] <= window_s
+
+    lag = _snap_lag(prior.lag_hours)
+    if onsets >= 3:
+        errs: dict[float, float] = {}
+        for cand in LAG_CANDIDATES:
+            g, rows = gross_for(cand)
+            if g is None:
+                continue
+            sel = [(y - g * d) ** 2 for i, d, y in rows if near_switch(i)]
+            if len(sel) >= 12:
+                errs[cand] = sum(sel) / len(sel)
+        if len(errs) >= 2:
+            best = min(errs)
+            for cand in sorted(errs):
+                # a longer lag must explain clearly more than a shorter one
+                if errs[cand] < errs[best] * 0.9:
+                    best = cand
+            lag = best
+
+    g_fit, rows = gross_for(lag)
+    gross_ok = g_fit is not None
+    g = _clamp(g_fit if gross_ok else prior.gross_rate, 0.2, 4.0)
+
+    model = ThermalModel(
         gross_rate=round(g, 3),
         tau_hours=round(tau, 1),
-        learned=len(taus) >= 6 or len(gross) >= 6,
-        samples=len(taus) + len(gross),
+        learned=tau_ok or gross_ok,
+        samples=len(taus) + (sum(1 for _, d, _ in rows if d >= 0.5) if gross_ok else 0),
+        solar_gain=round(gain, 3),
+        lag_hours=lag,
     )
+    model.rmse = model_rmse(model, pts)
+    if blend_poor and model.learned and model_quality(model) == "poor":
+        model = blend_models(model, prior, 0.5)  # keeps learned=True and rmse
+    return model
