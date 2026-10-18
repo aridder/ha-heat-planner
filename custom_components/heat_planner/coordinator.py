@@ -5,6 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import asdict, fields
 from datetime import datetime, timedelta
+from functools import partial
 import logging
 from typing import Any
 
@@ -43,12 +44,14 @@ from .const import (
     TUNABLE_ZONE,
     UPDATE_INTERVAL,
 )
+from .learning import samples_from_history
+from .solar import forecast_solar
 from .planner import (
+    model_quality,
     MODE_PERCENT,
     MODE_SETPOINT,
     Plan,
     PriceRules,
-    Sample,
     ThermalModel,
     ZoneConfig,
     build_plan,
@@ -96,6 +99,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.price_hours: dict[datetime, float] = {}
         self.away = False
         self.outdoor: dict[datetime, float] = {}
+        self.solar: dict[datetime, float] = {}
         self._outdoor_fetched: datetime | None = None
         self._applied: dict[str, dict[str, Any]] = {}
         self._safety: dict[str, bool] = {}
@@ -307,7 +311,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _LOGGER.debug("No hourly forecast from %s: %s", weather, err)
             return
         out: dict[datetime, float] = {}
-        for item in (resp or {}).get(weather, {}).get("forecast", []):
+        items = (resp or {}).get(weather, {}).get("forecast", [])
+        try:
+            self.solar = forecast_solar(items, self.hass.config.latitude, self.hass.config.longitude)
+        except Exception:  # noqa: BLE001 - solar is a refinement, never fatal
+            _LOGGER.debug("Could not derive solar factors", exc_info=True)
+        for item in items:
             t = dt_util.parse_datetime(str(item.get("datetime")))
             temp = _float(item.get("temperature"))
             if t and temp is not None:
@@ -607,7 +616,10 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 _LOGGER.debug("History unavailable for %s: %s", zid, err)
                 continue
             samples = await self.hass.async_add_executor_job(
-                _samples_from_history, hist, climate, sensor, weather, start, end
+                partial(
+                    samples_from_history, hist, climate, sensor, weather,
+                    self.hass.config.latitude, self.hass.config.longitude, start=start, end=end,
+                )
             )
             prior = thermal_prior(self.options.get(CONF_HOUSE))
             model = fit_thermal(samples, prior)
@@ -664,7 +676,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "climate_entity": cfg.get(CONF_CLIMATE),
                     "number_entity": cfg.get(CONF_NUMBER),
                     "settings": {k: getattr(zc, k) for k in TUNABLE_ZONE},
-                    "thermal": asdict(zc.thermal),
+                    "thermal": {**asdict(zc.thermal), "quality": model_quality(zc.thermal)},
                     "heater_kw": zc.heater_kw,
                     "heater_kw_source": (
                         "config" if (_float(cfg.get(CONF_HEATER_KW)) or 0) > 0
@@ -697,56 +709,3 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "zones": zones,
             "updated": dt_util.now().isoformat(),
         }
-
-
-def _samples_from_history(
-    hist: dict[str, list],
-    climate: str,
-    sensor: str | None,
-    weather: str | None,
-    start: datetime,
-    end: datetime,
-) -> list[Sample]:
-    """Resample history to a 30-minute grid of (room, outdoor, heating)."""
-
-    def series(entity_id: str | None, getter) -> list[tuple[datetime, Any]]:
-        if not entity_id:
-            return []
-        out = []
-        for st in hist.get(entity_id, []):
-            val = getter(st)
-            if val is not None:
-                out.append((st.last_updated, val))
-        return out
-
-    room_s = series(sensor, lambda s: _float(s.state)) if sensor else []
-    if not room_s:
-        room_s = series(
-            climate,
-            lambda s: (lambda v: v if v is not None and v > 1 else None)(
-                _float(s.attributes.get("current_temperature"))
-            ),
-        )
-    heat_s = series(climate, lambda s: s.attributes.get("hvac_action") == "heating")
-    out_s = series(weather, lambda s: _float(s.attributes.get("temperature")))
-    class Cursor:
-        """Walks a time-sorted series forward; O(n) over the whole grid."""
-
-        def __init__(self, data: list[tuple[datetime, Any]]) -> None:
-            self.data = sorted(data, key=lambda x: x[0])
-            self.i = -1
-
-        def at(self, t: datetime) -> Any:
-            while self.i + 1 < len(self.data) and self.data[self.i + 1][0] <= t:
-                self.i += 1
-            return self.data[self.i][1] if self.i >= 0 else None
-
-    rc, hc, oc = Cursor(room_s), Cursor(heat_s), Cursor(out_s)
-    samples: list[Sample] = []
-    t = start
-    while t <= end:
-        room, heating, outdoor = rc.at(t), hc.at(t), oc.at(t)
-        if room is not None and heating is not None:
-            samples.append(Sample(t, room, outdoor if outdoor is not None else 5.0, bool(heating)))
-        t += timedelta(minutes=30)
-    return samples
