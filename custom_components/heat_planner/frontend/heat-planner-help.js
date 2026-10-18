@@ -138,7 +138,59 @@
     nb: {
       title: "Slik fungerer varmeplanen",
       lead: "Heat Planner lager en plan for hver time de neste 36 timene, for hvert rom – og stiller termostatene etter den. Her er hva som påvirker planen, og hvordan du tar kontrollen selv.",
-      toc: ["En vanlig dag", "Fargene", "Prisreglene", "Når dere er borte", "Endre planen", "Når du tar over", "Sikkerhet", "Hva den lærer", "Kostnad", "Innstillinger", "Spørsmål"],
+      toc: ["En vanlig dag", "Fargene", "Prisreglene", "Strømavtalen", "Effekttrinn", "Når dere er borte", "Hjemkomst", "Endre planen", "Når du tar over", "For kaldt / varmt", "Sikkerhet", "Hva den lærer", "Hvor sikker", "Kostnad", "Innstillinger", "Spørsmål"],
+
+      tariffH: "Strømavtalen",
+      tariffP: "Hvor mye det lønner seg å flytte varme i tid, avhenger av hva dere betaler. Søylene viser samme døgn med tre ulike avtaler.",
+      tariffs: [
+        ["Spotpris", "Prisen følger børsen time for time. Store forskjeller mellom timene – her gir prisstyring mest."],
+        ["Strømstøtte", "Staten dekker 90 % av prisen over en terskel. Toppene blir flate, så det er mindre å hente på å flytte forbruk."],
+        ["Norgespris", "Samme pris hele døgnet. Å flytte forbruk sparer nesten ingenting – planen holder komforten og passer heller på effekttoppene."],
+      ],
+      thresholdLbl: "terskel", fixedLbl: "fast pris",
+      tariffLive: (l) => `Dere har: <b>${l}</b>.`,
+
+      peakH: "Effekttrinn",
+      peakP: "En del av nettleien er et fast beløp hver måned. Trinnet bestemmes av snittet av de tre høyeste timene i måneden, fra tre ulike døgn. Heat Planner setter et tak for hver time, så varmen ikke dytter dere opp i neste trinn.",
+      peakMarks: [
+        ["1", "Tre høyeste døgn", "Snittet av disse bestemmer trinnet."],
+        ["2", "Tak i dag", "Varmen fordeles så timeforbruket holder seg under."],
+        ["3", "Neste trinn", "Koster mer hver måned resten av måneden."],
+      ],
+      capLbl: "tak i dag", stepLbl: "neste trinn",
+      peakNotes: ["Taket gjelder hele huset – varmtvann, elbil og komfyr teller også.", "Når taket ville blitt brutt, flyttes varme til timer med lavere forbruk."],
+      peakLive: (p) => `Nå: ${[p.step ? `effekttrinn <b>${p.step}</b>` : "", p.avg ? `snitt topp 3 <b>${p.avg} kW</b>` : "", p.cap ? `tak i dag <b>${p.cap} kW</b>` : ""].filter(Boolean).join(" · ")}.`,
+
+      arrivalH: "Lærer når dere kommer hjem",
+      arrivalP: "Står «Varmt igjen fra» på Auto, ser Heat Planner på når huset går fra tomt til at noen kommer hjem – ukedag for ukedag, de siste seks ukene. Den velger et tidlig anslag og begynner å varme så lenge før som rommet trenger.",
+      arrivalMarks: [
+        ["1", "Hjemkomster", "Hver prikk er en dag den første kom hjem."],
+        ["2", "Tidlig anslag", "Et av de tidligste tidspunktene, så dere sjelden kommer til et kaldt hus."],
+        ["3", "Varmer fra", "Anslaget minus tiden rommet trenger, mellom kl. 10 og 18."],
+      ],
+      arrivalNotes: ["Korte ærender under to timer og hjemkomster om natta teller ikke.", "Den trenger minst tre dager før den stoler på en ukedag. Til da brukes hverdager eller helg samlet – ellers den faste timen.", "Telefoner uten fungerende sporing teller ikke."],
+      arrivalLive: (t) => `Hos dere: vanligvis hjemme ca. <b>${t}</b>.`,
+      expLbl: "anslag", warmLbl: "varmer opp",
+
+      fbH: "For kaldt eller for varmt?",
+      fbP: "Trykk «For kaldt» eller «For varmt» i planen. Heat Planner justerer én ting litt – ut fra hva planen gjorde akkurat da – og forteller hva den endret.",
+      fbDemo: ["Stue er 19,5°. Sparer med 20° i en dyr time.", "For kaldt", "For varmt", "Senker mindre i dyre timer (1° → 0,5°)."],
+      fbRules: [
+        ["For kaldt i en sparetime", "Senker 0,5° mindre i dyre timer. Var rommet nær «Aldri av under», heves også den."],
+        ["For kaldt mens ingen var hjemme", "Senker 0,5° mindre når dere er borte."],
+        ["For kaldt ellers", "Komforttemperaturen går opp 0,5°."],
+        ["For varmt", "Komforttemperaturen går ned 0,5° – eller den forvarmer mindre, hvis den forvarmet. Rom i prosent justeres 5 %."],
+      ],
+      fbNote: "Trykker noen på samme knapp igjen innen ti minutter, teller det bare én gang. De siste 20 tilbakemeldingene huskes.",
+
+      confH: "Hvor sikker er modellen?",
+      confP: "Rommodellen sammenligner det den ville spådd med det termometeret faktisk viste. Jo mindre avvik, jo mer tør planen å bruke gulvet som varmelager.",
+      conf: [["good", "God", "Små avvik. Planen kan forvarme og spare som beskrevet."], ["fair", "Middels", "Noe avvik. Planen er litt mer forsiktig."], ["uncertain", "Usikker", "Lite data eller store avvik. Planen holder seg nær døgnkurven."]],
+      confNotes: ["Sol gjennom vinduene og at gulvet reagerer med forsinkelse tas med når modellen har lært det.", "Under «Innstillinger» i planen står hvor godt modellen treffer for hvert rom."],
+      confLbl: "avvik",
+      confZone: (z) => `<b>${esc(z.name)}</b>: ${z.q}` + (z.rmse ? ` · ±${z.rmse}°` : "") + (z.solar ? " · sol" : "") + (z.lag ? ` · reagerer etter ${z.lag} t` : ""),
+      autoLbl: "Auto",
+      awayAuto: " Står den på Auto, er timen lært av når dere pleier å komme hjem.",
       inputs: [
         ["mdi:chart-bell-curve-cumulative", "Døgnkurven", "Hvor varmt dere vil ha det"],
         ["mdi:lightning-bolt", "Strømprisen", "Time for time"],
@@ -256,7 +308,59 @@
     en: {
       title: "How the heating plan works",
       lead: "Heat Planner makes an hour-by-hour plan for the next 36 hours for every room – and sets the thermostats to follow it. Here is what shapes the plan, and how you take control yourself.",
-      toc: ["A normal day", "Colours", "Price rules", "When you're away", "Changing the plan", "Taking over", "Safety", "What it learns", "Cost", "Settings", "Questions"],
+      toc: ["A normal day", "Colours", "Price rules", "Your contract", "Capacity tariff", "When you're away", "Arrival", "Changing the plan", "Taking over", "Too cold / warm", "Safety", "What it learns", "Confidence", "Cost", "Settings", "Questions"],
+
+      tariffH: "Your electricity contract",
+      tariffP: "How much it pays to move heat in time depends on what you actually pay. The bars show the same day on three different contracts.",
+      tariffs: [
+        ["Spot price", "The price follows the market hour by hour. Big differences between hours – this is where price control helps most."],
+        ["Electricity support", "The state covers 90 % of the price above a threshold. Peaks are flattened, so there is less to gain from moving consumption."],
+        ["Norgespris", "One price all day. Moving consumption saves almost nothing – the plan keeps you comfortable and watches the power peaks instead."],
+      ],
+      thresholdLbl: "threshold", fixedLbl: "fixed price",
+      tariffLive: (l) => `You have: <b>${l}</b>.`,
+
+      peakH: "Capacity tariff",
+      peakP: "Part of the grid fee is a fixed monthly amount. The step is set by the average of the month's three highest hours, from three different days. Heat Planner sets a cap for every hour so heating doesn't push you into the next step.",
+      peakMarks: [
+        ["1", "Three highest days", "Their average sets the step."],
+        ["2", "Today's cap", "Heating is spread so each hour stays below it."],
+        ["3", "Next step", "Costs more every month for the rest of the month."],
+      ],
+      capLbl: "today's cap", stepLbl: "next step",
+      peakNotes: ["The cap covers the whole home – water heater, EV and stove count too.", "When the cap would be exceeded, heat is moved to hours with lower use."],
+      peakLive: (p) => `Now: ${[p.step ? `step <b>${p.step}</b>` : "", p.avg ? `average top 3 <b>${p.avg} kW</b>` : "", p.cap ? `cap today <b>${p.cap} kW</b>` : ""].filter(Boolean).join(" · ")}.`,
+
+      arrivalH: "Learning when you get home",
+      arrivalP: "With “Warm again from” set to Auto, Heat Planner watches when the house goes from empty to someone coming home – weekday by weekday, over the last six weeks. It picks an early estimate and starts warming as long before as the room needs.",
+      arrivalMarks: [
+        ["1", "Arrivals", "Each dot is a day the first person got home."],
+        ["2", "Early estimate", "One of the earliest times, so you rarely come home to a cold house."],
+        ["3", "Warms from", "The estimate minus the time the room needs, between 10:00 and 18:00."],
+      ],
+      arrivalNotes: ["Short errands under two hours and arrivals at night don't count.", "It needs at least three days before trusting a weekday. Until then weekdays or weekends are pooled – otherwise the fixed hour is used.", "Phones without working tracking are ignored."],
+      arrivalLive: (t) => `In your home: usually home around <b>${t}</b>.`,
+      expLbl: "estimate", warmLbl: "warming up",
+
+      fbH: "Too cold or too warm?",
+      fbP: "Tap “Too cold” or “Too warm” in the plan. Heat Planner nudges one thing a little – based on what the plan was doing at that moment – and tells you what it changed.",
+      fbDemo: ["Living room is 19.5°. Saving at 20° through an expensive hour.", "Too cold", "Too warm", "Lowering less in expensive hours (1° → 0.5°)."],
+      fbRules: [
+        ["Too cold in a saving hour", "Lowers 0.5° less in expensive hours. If the room was near “Never off below”, that is raised too."],
+        ["Too cold while nobody was home", "Lowers 0.5° less when you're away."],
+        ["Too cold otherwise", "Comfort temperature goes up 0.5°."],
+        ["Too warm", "Comfort temperature goes down 0.5° – or it pre-heats less, if it was pre-heating. Percent rooms change by 5 %."],
+      ],
+      fbNote: "Pressing the same button again within ten minutes counts once. The last 20 pieces of feedback are kept.",
+
+      confH: "How sure is the model?",
+      confP: "The room model compares what it would have predicted with what the thermometer actually showed. The smaller the error, the more the plan dares to use the floor as a heat store.",
+      conf: [["good", "Good", "Small errors. The plan pre-heats and saves as described."], ["fair", "Fair", "Some error. The plan is a little more careful."], ["uncertain", "Uncertain", "Little data or large errors. The plan stays close to the day curve."]],
+      confNotes: ["Sun through the windows and a floor that responds with a delay are included once the model has learned them.", "“Settings” in the plan shows how well the model fits each room."],
+      confLbl: "error",
+      confZone: (z) => `<b>${esc(z.name)}</b>: ${z.q}` + (z.rmse ? ` · ±${z.rmse}°` : "") + (z.solar ? " · sun" : "") + (z.lag ? ` · responds after ${z.lag} h` : ""),
+      autoLbl: "Auto",
+      awayAuto: " Set to Auto, the hour is learned from when you usually get home.",
       inputs: [
         ["mdi:chart-bell-curve-cumulative", "Day curve", "How warm you want it"],
         ["mdi:lightning-bolt", "Electricity price", "Hour by hour"],
@@ -502,7 +606,32 @@ summary::after { content:"+"; color:var(--hp-soft); font-weight:400; }
 details[open] summary::after { content:"–"; }
 details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-height:1.5; max-width:70ch; }
 
+.ill .capl { stroke:var(--hp-ext); stroke-dasharray:4 3; stroke-width:1.2; }
+.ill .capt { fill:var(--hp-ext); font-size:10.5px; text-anchor:end; }
+.ill .stepl { stroke:var(--hp-ink); opacity:.35; }
+.ill .stept { fill:var(--hp-soft); font-size:10.5px; text-anchor:end; }
+.ill .ghost { fill:none; stroke:var(--hp-line); stroke-width:1; }
+.ill .warm { fill:color-mix(in srgb, var(--hp-comfort) 14%, transparent); }
+.ill .estl { stroke:var(--hp-ink); stroke-width:1.5; }
+.ill .rowl { fill:var(--hp-soft); font-size:10.5px; text-anchor:end; }
+.ill .adot { fill:var(--hp-setback); opacity:.75; }
+.ill .cband { fill:color-mix(in srgb, var(--hp-save) 14%, transparent); }
+.live2 { margin:12px 0 0; color:var(--hp-soft); font-size:13.5px; }
+.fbdemo { border:1px solid var(--hp-line); border-radius:16px; padding:14px 16px; max-width:520px; }
+.fbdemo .s { font-size:16px; line-height:1.35; margin:0 0 8px; }
+.fbdemo .c { display:flex; gap:6px; }
+.fbdemo .c span { font-size:12px; padding:4px 10px; border-radius:999px; border:1px solid var(--hp-line); color:var(--hp-soft); }
+.fbdemo .c span.on { color:var(--hp-ink); border-color:var(--hp-ink); }
+.fbdemo .c i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; vertical-align:1px; }
+.fbdemo .m { margin:10px 0 0; font-size:13px; color:var(--hp-ink); }
+.fbgrid { display:grid; grid-template-columns:minmax(0, 1fr) minmax(0, 1fr); gap:22px; align-items:start; }
+.conf { display:grid; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); gap:10px; margin-top:14px; }
+.conf > div { padding:12px 14px; border-radius:12px; background:var(--hp-tint); }
+.conf b { display:block; font-size:13.5px; } .conf span { font-size:12.5px; color:var(--hp-soft); line-height:1.45; }
+.conf .meter { margin:0 0 6px; }
+
 @media (max-width: 720px) {
+  .fbgrid { grid-template-columns:1fr; }
   .flow { grid-template-columns:1fr; } .arrow { width:2px; height:20px; margin:0 auto; }
   .arrow::after { right:-4px; top:auto; bottom:-1px; border:5px solid transparent; border-top:7px solid var(--hp-line); border-bottom:0; }
   .learn { grid-template-columns:1fr; }
@@ -556,8 +685,16 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
           n: r.expensive_hours ?? 3, shift: fmtN(s.price_shift ?? 1, loc), pre: fmtN(s.preheat ?? 1, loc),
           safety: fmtN(s.safety_min_temp ?? 18, loc), pf: String(s.protected_from_hour ?? 13).padStart(2, "0"),
           pt: String(s.protected_to_hour ?? 15).padStart(2, "0"), away: s.away_offset ?? -4,
-          until: String(s.away_until_hour ?? 13).padStart(2, "0"), maxoff: s.max_off_hours ?? 2,
+          until: String(s.away_until_hour === -1 ? (d?.arrival?.warm_from ?? 13) : (s.away_until_hour ?? 13)).padStart(2, "0"),
+          auto: s.away_until_hour === -1, maxoff: s.max_off_hours ?? 2,
         },
+        tariff: d?.tariff?.label || null,
+        peak: d?.peak ? {
+          step: d.peak.step_label ? esc(d.peak.step_label) : null,
+          avg: typeof d.peak.month_avg_kw === "number" ? fmtN(d.peak.month_avg_kw, loc) : null,
+          cap: typeof d.peak.cap_kw === "number" ? fmtN(d.peak.cap_kw, loc) : null,
+        } : null,
+        arrival: d?.arrival?.expected || null,
         r: { ratio: fmtN(r.extreme_ratio ?? 1.5, loc), min: money(r.extreme_min_price ?? 2), abs: money(r.extreme_abs_price ?? 3) },
       };
     }
@@ -568,12 +705,13 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
     }
     _render() {
       const t = T[this.langKey] || T.en, c = this._ctx(), s = c.s;
-      const sec = (id, i, h, body) => `<section id="${id}"><p class="eyebrow">${String(i).padStart(2, "0")}</p><h2>${h}</h2>${body}</section>`;
+      // sections are numbered in display order when assembled (see bottom)
+      const sec = (id, _i, h, body) => ({ id, h, body });
       const node = ([icon, b, sp], big) => `<div class="node${big ? " big" : ""}"><ha-icon icon="${icon}"></ha-icon><div><b>${b}</b><span>${sp}</span></div></div>`;
       const marks = (list) => `<ul class="marks">${list.map(([k, b, p]) => `<li><span class="num">${k}</span><div><b>${b}</b>${p}</div></li>`).join("")}</ul>`;
       const zoneNames = c.zones.map((z) => esc(z.name));
       const zList = zoneNames.length > 1 ? zoneNames.slice(0, -1).join(", ") + (this.langKey === "nb" ? " og " : " and ") + zoneNames.at(-1) : zoneNames[0];
-      const ids = ["day", "colors", "rules", "away", "edit", "manual", "safety", "learn", "money", "settings", "faq"];
+      const ids = ["day", "colors", "rules", "tariff", "peak", "away", "arrival", "edit", "manual", "feedback", "safety", "learn", "confidence", "money", "settings", "faq"];
 
       const hero = `
         <div class="top">
@@ -615,7 +753,7 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
         <p class="sub">${t.strategyH}</p>
         <div class="strat">${t.strategies.map(([b, sp], i) => `<div><b>${b}</b><span>${sp}</span><div class="meter">${[0, 1, 2, 3].map((k) => `<i class="${k < [0, 1, 2, 4][i] ? "on" : ""}"></i>`).join("")}</div></div>`).join("")}</div>`);
 
-      const away = sec("away", 4, t.awayH, `<p class="d">${t.awayP(s)}</p>` + chart({
+      const away = sec("away", 4, t.awayH, `<p class="d">${t.awayP(s)}${s.auto ? t.awayAuto : ""}</p>` + chart({
         ...AWAY, start: 0, y: [15.5, 24], ticks: [16, 18, 20, 22], every: 3,
         bands: [{ from: 8, to: 16, label: t.awayLbl, kind: "away" }],
         marks: [{ k: "1", h: 8 }, { k: "2", h: 13 }, { k: "3", h: 16, y: 21.3 }], aria: t.awayH,
@@ -661,7 +799,7 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
             case "extreme_off": return st.extreme_off ? t.yes : t.no;
             case "safety_min_temp": return `${fmtN(st.safety_min_temp, c.loc)}°`;
             case "away_offset": return u(st.away_offset);
-            case "away_until_hour": return String(st.away_until_hour).padStart(2, "0");
+            case "away_until_hour": return st.away_until_hour === -1 ? t.autoLbl : String(st.away_until_hour).padStart(2, "0");
             case "protected": return `${String(st.protected_from_hour).padStart(2, "0")}–${String(st.protected_to_hour).padStart(2, "0")}`;
             default: return "–";
           }
@@ -671,7 +809,39 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
 
       const faq = sec("faq", c.zones.length ? 11 : 10, t.faqH, t.faq.map(([q, a]) => `<details><summary>${q}</summary><p>${a}</p></details>`).join(""));
 
-      this.shadowRoot.innerHTML = `<style>${CSS}</style><div class="wrap">${hero}${day}${colors}${rules}${away}${edit}${manual}${safety}${learn}${money}${settings}${faq}</div>`;
+      const tariff = sec("tariff", 0, t.tariffH, `<p class="d">${t.tariffP}</p><div class="cards" style="grid-template-columns:repeat(auto-fit, minmax(min(100%, 230px), 1fr))">${t.tariffs.map(([h, p], i) =>
+        `<div class="card"><h3>${h}</h3><p>${p}</p>${this._tariffIll(i, t)}</div>`).join("")}</div>` +
+        (c.tariff ? `<p class="live2">${t.tariffLive(esc(c.tariff))}</p>` : ""));
+
+      const peak = sec("peak", 0, t.peakH, `<p class="d">${t.peakP}</p>` + this._peakIll(t) + marks(t.peakMarks) +
+        `<ul class="notes">${t.peakNotes.map((x) => `<li>${x}</li>`).join("")}</ul>` +
+        (c.peak && (c.peak.step || c.peak.avg || c.peak.cap) ? `<p class="live2">${t.peakLive(c.peak)}</p>` : ""));
+
+      const arrival = sec("arrival", 0, t.arrivalH, `<p class="d">${t.arrivalP}</p>` + this._arrivalIll(t) + marks(t.arrivalMarks) +
+        `<ul class="notes">${t.arrivalNotes.map((x) => `<li>${x}</li>`).join("")}</ul>` +
+        (c.arrival ? `<p class="live2">${t.arrivalLive(esc(c.arrival))}</p>` : ""));
+
+      const [d0, d1, d2, d3] = t.fbDemo;
+      const feedback = sec("feedback", 0, t.fbH, `<p class="d">${t.fbP}</p><div class="fbgrid">
+        <div class="fbdemo" aria-hidden="true"><p class="s">${d0}</p>
+          <div class="c"><span class="on"><i style="background:var(--hp-setback)"></i>${d1}</span><span><i style="background:var(--hp-preheat)"></i>${d2}</span></div>
+          <p class="m">${d3}</p></div>
+        <ul class="marks" style="margin:0;grid-template-columns:1fr">${t.fbRules.map(([b, p], i) => `<li><span class="num">${i + 1}</span><div><b>${b}</b>${p}</div></li>`).join("")}</ul>
+      </div><p class="tip">${t.fbNote}</p>`);
+
+      const confZones = c.zones.filter((z) => z.mode !== "percent" && z.thermal && (z.thermal.quality || typeof z.thermal.rmse === "number")).map((z) => {
+        const th = z.thermal, q = (t.conf.find(([k]) => k === th.quality) || [])[1] || esc(th.quality || "–");
+        const lag = th.lag_hours ?? th.lag;
+        return `<li>${t.confZone({ name: z.name, q, rmse: typeof th.rmse === "number" ? fmtN(th.rmse, c.loc) : null, solar: (th.solar_gain ?? th.solar) > 0, lag: typeof lag === "number" && lag >= 0.25 ? fmtN(lag, c.loc) : null })}</li>`;
+      }).join("");
+      const confidence = sec("confidence", 0, t.confH, `<p class="d">${t.confP}</p><div class="learn"><div>${this._confIll(t)}</div>
+        ${confZones ? `<ul class="zl">${confZones}</ul>` : `<ul class="notes" style="margin:0">${t.confNotes.map((x) => `<li>${x}</li>`).join("")}</ul>`}</div>
+        <div class="conf">${t.conf.map(([, b, p], i) => `<div><div class="meter">${[0, 1, 2].map((k) => `<i class="${k < 3 - i ? "on" : ""}"></i>`).join("")}</div><b>${b}</b><span>${p}</span></div>`).join("")}</div>
+        ${confZones ? `<ul class="notes">${t.confNotes.map((x) => `<li>${x}</li>`).join("")}</ul>` : ""}`);
+
+      const order = [day, colors, rules, tariff, peak, away, arrival, edit, manual, feedback, safety, learn, confidence, money, settings, faq].filter(Boolean);
+      const body = order.map((x, i) => `<section id="${x.id}"><p class="eyebrow">${String(i + 1).padStart(2, "0")}</p><h2>${x.h}</h2>${x.body}</section>`).join("");
+      this.shadowRoot.innerHTML = `<style>${CSS}</style><div class="wrap">${hero}${body}</div>`;
       this.shadowRoot.querySelectorAll("[data-lang]").forEach((b) => b.addEventListener("click", () => this._setLang(b.dataset.lang)));
       this.shadowRoot.querySelectorAll("[data-go]").forEach((b) => b.addEventListener("click", () => this.shadowRoot.getElementById(b.dataset.go)?.scrollIntoView({ behavior: "smooth", block: "start" })));
     }
@@ -699,6 +869,105 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
       s += `<path d="M${X(17) + bw / 2},${y1} C${X(19)},${y1 - 10} ${X(20)},${y1 - 10} ${X(21) + bw / 2},${y1}" fill="none" stroke="var(--hp-ink)" stroke-width="1.5" marker-end="url(#ah)"/>`;
       s += `<defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0L10,5L0,10z" fill="var(--hp-ink)"/></marker></defs>`;
       return `<div class="scroll"><svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(t.editH)}">${s}</svg></div>`;
+    }
+
+    _tariffIll(kind, t) {
+      // The same day's prices as paid on spot, with electricity support, and on Norgespris.
+      const W = 320, H = 112, ml = 8, mr = 8, top = 16, ch = 74, n = 24, bw = (W - ml - mr) / n;
+      const X = (i) => ml + i * bw, pmax = 3.3, Y = (v) => top + ch - (v / pmax) * ch;
+      const thr = 0.94, fixed = 0.5;
+      let s = "";
+      DAY.prices.forEach((p, i) => {
+        const eff = kind === 0 ? p : kind === 1 ? (p > thr ? thr + (p - thr) * 0.1 : p) : fixed;
+        if (kind > 0) s += `<rect x="${X(i) + bw * 0.17}" y="${Y(p)}" width="${bw * 0.66}" height="${top + ch - Y(p)}" rx="2" class="ghost"/>`;
+        const col = kind === 0 ? LEVEL[DAY.levels[i]] : kind === 1 && p > thr ? LEVEL.e : LEVEL.n;
+        s += `<rect x="${X(i) + bw * 0.17}" y="${Y(eff)}" width="${bw * 0.66}" height="${Math.max(2, top + ch - Y(eff))}" rx="2" fill="${col}"/>`;
+        if (i % 6 === 0) s += `<text x="${X(i) + bw / 2}" y="${H - 6}" class="xl">${String(i).padStart(2, "0")}</text>`;
+      });
+      if (kind > 0) {
+        const v = kind === 1 ? thr : fixed;
+        s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(v)}" y2="${Y(v)}" class="hl"/>`;
+        s += `<text x="${W - mr - 2}" y="${Y(v) - 5}" class="hlt">${esc(kind === 1 ? t.thresholdLbl : t.fixedLbl)}</text>`;
+      }
+      return `<svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(t.tariffs[kind][0])}">${s}</svg>`;
+    }
+
+    _peakIll(t) {
+      // Daily peak hour (kW) for half a month: the three highest set the step; a dashed cap keeps today below the next step.
+      const days = [5.1, 6.3, 4.8, 7.9, 5.5, 6.0, 8.4, 5.2, 4.9, 7.2, 6.1, 5.8, 5.0, 6.6, 5.4, 4.6];
+      const today = 6.9, top3 = [...days].sort((a, b) => b - a).slice(0, 3);
+      const W = 640, H = 190, ml = 34, mr = 10, top = 26, ch = 130, n = days.length + 1, bw = (W - ml - mr) / n;
+      const X = (i) => ml + i * bw, Y = (v) => top + ch - (v / 11) * ch;
+      const cap = 9.0, step = 10;
+      let s = "";
+      for (const v of [0, 5, 10]) s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(v)}" y2="${Y(v)}" class="gl"/><text x="${ml - 7}" y="${Y(v) + 3.5}" class="yl">${v}</text>`;
+      s += `<text x="${ml - 7}" y="${top - 12}" class="yl">kW</text>`;
+      const used = new Set();
+      days.forEach((v, i) => {
+        const hi = top3.includes(v) && !used.has(v) && used.add(v);
+        s += `<rect x="${X(i) + bw * 0.2}" y="${Y(v)}" width="${bw * 0.6}" height="${top + ch - Y(v)}" rx="3" fill="${hi ? "var(--hp-ink)" : LEVEL.n}" opacity="${hi ? 0.8 : 1}"/>`;
+        s += `<text x="${X(i) + bw / 2}" y="${top + ch + 16}" class="xl">${i + 1}</text>`;
+      });
+      const ti = days.length;
+      s += `<rect x="${X(ti) + bw * 0.2}" y="${Y(today)}" width="${bw * 0.6}" height="${top + ch - Y(today)}" rx="3" fill="var(--hp-save)"/>`;
+      s += `<text x="${X(ti) + bw / 2}" y="${top + ch + 16}" class="xl">${esc(t.nowLbl)}</text>`;
+      s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(step)}" y2="${Y(step)}" class="stepl"/><text x="${ml + 28}" y="${Y(step) - 6}" class="stept" style="text-anchor:start">${esc(t.stepLbl)}</text>`;
+      s += `<line x1="${X(ti - 2)}" x2="${W - mr}" y1="${Y(cap)}" y2="${Y(cap)}" class="capl"/><text x="${X(ti - 2) - 4}" y="${Y(cap) + 3.5}" class="capt">${esc(t.capLbl)}</text>`;
+      const mk = (k, x, y) => `<g class="mk"><circle cx="${x}" cy="${y}" r="9.5"/><text x="${x}" y="${y + 4}">${k}</text></g>`;
+      const i1 = days.indexOf(top3[0]);
+      s += mk("1", X(i1) + bw / 2, Y(top3[0]) - 16) + mk("2", X(ti) + bw / 2, Y(today) - 16) + mk("3", ml + 14, Y(step) - 10);
+      return `<div class="scroll"><svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(t.peakH)}">${s}</svg></div>`;
+    }
+
+    _arrivalIll(t) {
+      // Arrival times per weekday over six weeks, the early estimate, and the warm-up lead before it.
+      const W = 640, H = 196, ml = 44, mr = 12, top = 30, rowH = 26, h0 = 12, h1 = 19;
+      const X = (h) => ml + ((h - h0) / (h1 - h0)) * (W - ml - mr);
+      const rows = this.langKey === "nb" ? ["man", "tir", "ons", "tor", "fre"] : ["Mon", "Tue", "Wed", "Thu", "Fri"];
+      const base = [15.3, 15.45, 15.25, 15.6, 14.9];
+      const est = 15 + 10 / 60, warm = 13;
+      let s = `<rect x="${X(warm)}" y="${top - 18}" width="${X(est) - X(warm)}" height="${rows.length * rowH + 18}" rx="7" class="warm"/>`;
+      s += `<text x="${X(warm) + 7}" y="${top - 6}" class="bl">${esc(t.warmLbl)}</text>`;
+      rows.forEach((r, k) => {
+        const y = top + k * rowH + rowH / 2;
+        s += `<line x1="${ml}" x2="${W - mr}" y1="${y}" y2="${y}" class="gl"/><text x="${ml - 8}" y="${y + 3.5}" class="rowl">${r}</text>`;
+        const offs = [-0.2, 0.05, 0.32, -0.08, 0.5, 0.18];
+        for (let w = 0; w < 6; w++) {
+          const jitter = offs[(w + k * 2) % 6] + (w === 2 && k === 3 ? 1.5 : 0);
+          s += `<circle cx="${X(base[k] + jitter)}" cy="${y}" r="4" class="adot"/>`;
+        }
+      });
+      const yb = top + rows.length * rowH;
+      s += `<line x1="${X(est)}" x2="${X(est)}" y1="${top - 18}" y2="${yb}" class="estl"/>`;
+      s += `<text x="${X(est) + 5}" y="${top - 6}" class="bl">${esc(t.expLbl)} 15:10</text>`;
+      for (let h = h0; h <= h1; h++) s += `<text x="${X(h)}" y="${yb + 18}" class="xl">${String(h).padStart(2, "0")}</text>`;
+      const mk = (k, x, y) => `<g class="mk"><circle cx="${x}" cy="${y}" r="9.5"/><text x="${x}" y="${y + 4}">${k}</text></g>`;
+      s += mk("1", X(16.35), top + rowH / 2 - 14) + mk("2", X(est), yb + 34) + mk("3", X(warm), yb + 34);
+      return `<div class="scroll"><svg viewBox="0 0 ${W} ${H + 12}" class="ill" role="img" aria-label="${esc(t.arrivalH)}">${s}</svg></div>`;
+    }
+
+    _confIll(t) {
+      // Model prediction with its typical error as a band; measured temperatures mostly fall inside.
+      const W = 420, H = 170, ml = 34, mr = 10, top = 14, ch = 128, n = 24, bw = (W - ml - mr) / n;
+      const X = (i) => ml + i * bw, Y = (v) => top + ch - ((v - 18) / 6) * ch;
+      const model = [], meas = [];
+      let T = 19.2;
+      for (let i = 0; i < n; i++) {
+        T = i >= 4 && i < 10 ? T + (23.5 - T) * 0.25 : T - (T - 17) / 22;
+        model.push(T);
+        meas.push(T + Math.sin(i * 2.7) * 0.25);
+      }
+      const r = 0.35;
+      let band = model.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v + r).toFixed(1)}`).join("");
+      band += model.map((v, i) => [i, v]).reverse().map(([i, v]) => `L${(X(i) + bw / 2).toFixed(1)},${Y(v - r).toFixed(1)}`).join("") + "Z";
+      let s = "";
+      for (const v of [18, 20, 22, 24]) s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(v)}" y2="${Y(v)}" class="gl"/><text x="${ml - 7}" y="${Y(v) + 3.5}" class="yl">${v}°</text>`;
+      s += `<path d="${band}" class="cband"/>`;
+      s += `<path d="${model.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v).toFixed(1)}`).join("")}" class="pred"/>`;
+      meas.forEach((v, i) => { s += `<circle cx="${X(i) + bw / 2}" cy="${Y(v)}" r="2.6" class="dot"/>`; });
+      s += `<text x="${X(10) + bw / 2}" y="${Y(model[10] + r) - 8}" class="bl">±${t.confLbl}</text>`;
+      return `<svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(t.confH)}">${s}</svg>
+        <div class="prices" style="margin-top:6px"><span><i style="width:8px;height:8px;border-radius:50%;background:var(--hp-ink);opacity:.55;vertical-align:0"></i>${t.learnLegend[0]}</span><span><i class="dash"></i>${t.learnLegend[1]}</span></div>`;
     }
   }
   customElements.define("heat-planner-help", HeatPlannerHelp);
