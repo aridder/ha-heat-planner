@@ -195,7 +195,7 @@ async def ws_settings(
             except (TypeError, ValueError):
                 continue
     limits = {
-        "away_until_hour": (0, 24), "protected_from_hour": (0, 24), "protected_to_hour": (0, 24),
+        "away_until_hour": (-1, 24), "protected_from_hour": (0, 24), "protected_to_hour": (0, 24),
         "expensive_hours": (0, 12), "lookahead_hours": (1, 12), "max_off_hours": (0, 24),
         "comfort": (5, 30), "min_value": (0, 100), "max_value": (0, 100),
         "away_offset": (-80, 0), "price_shift": (0, 60), "preheat": (0, 40),

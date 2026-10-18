@@ -44,7 +44,20 @@ from .const import (
     TUNABLE_ZONE,
     UPDATE_INTERVAL,
 )
+from .energy import (
+    async_house_hourly_kwh,
+    apply_cuts,
+    base_load,
+    heaters_only_caps,
+    house_meter,
+    limit,
+    peak_from_options,
+    plan_caps,
+    tariff_from_options,
+)
 from .learning import samples_from_history
+from .peak import realtime_shed
+from .tariff import describe as describe_tariff, effective_prices, fixed_prices
 from .solar import forecast_solar
 from .planner import (
     model_quality,
@@ -53,6 +66,7 @@ from .planner import (
     Plan,
     PriceRules,
     ThermalModel,
+    R_PROTECTED,
     ZoneConfig,
     build_plan,
     classify_prices,
@@ -100,6 +114,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.away = False
         self.outdoor: dict[datetime, float] = {}
         self.solar: dict[datetime, float] = {}
+        self.spot_hours: dict[datetime, float] = {}
+        self.peak_state = None
+        self._house_kwh: dict[datetime, float] = {}
+        self._house_fetched: datetime | None = None
+        self._shed: dict[str, datetime] = {}
         self._outdoor_fetched: datetime | None = None
         self._applied: dict[str, dict[str, Any]] = {}
         self._safety: dict[str, bool] = {}
@@ -224,6 +243,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._unsubs.append(
                 async_track_state_change_event(self.hass, watch, self._presence_changed)
             )
+        meter = house_meter(self.options)
+        if meter and peak_from_options(self.options):
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, [meter], self._meter_changed)
+            )
         # learn the thermal model every night
         self._unsubs.append(
             async_track_time_change(self.hass, self._nightly, hour=3, minute=17, second=0)
@@ -248,6 +272,27 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     @callback
     def _presence_changed(self, event: Event) -> None:
         self.hass.async_create_task(self.async_request_refresh())
+
+    @callback
+    def _meter_changed(self, event: Event) -> None:
+        now = dt_util.now()
+        if getattr(self, "_guard_at", None) and now - self._guard_at < timedelta(seconds=60):
+            return
+        self._guard_at = now
+        before = set(self._shed)
+        self._realtime_guard()
+        if set(self._shed) != before:
+            _LOGGER.info("Capacity guard: setting back %s", sorted(self._shed) or "nothing")
+            for zid in before ^ set(self._shed):
+                self._applied.pop(zid, None)
+            self.hass.async_create_task(self._reapply())
+
+    async def _reapply(self) -> None:
+        for zid, plan in self.plans.items():
+            await self._apply(zid, plan)
+        if self.peak_state is not None:
+            self.peak_state.shed = sorted(self._shed)
+        self.async_update_listeners()
 
     async def _on_hour(self, now: datetime) -> None:
         await self.async_request_refresh()
@@ -332,6 +377,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------------ planning
 
+    @property
+    def optimize(self) -> bool:
+        """Use the optimiser (default) or the plain price rules."""
+        # new setups (with the energy step) start with the optimiser; older ones keep the rules
+        return bool(self.state.get("optimize", bool(self.options.get("energy"))))
+
     def plan_zone(
         self,
         zone_id: str,
@@ -341,6 +392,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         overrides: dict[str, list[float]] | None = None,
         hours: int = PLAN_HOURS,
         start: datetime | None = None,
+        adjust=None,
     ) -> Plan:
         return build_plan(
             zone or self.zone(zone_id),
@@ -354,23 +406,120 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             room_temp=self.room_temperature(zone_id),
             outdoor=self.outdoor,
             outdoor_default=self.outdoor_now(),
+            method="optimize" if self.optimize else "rules",
+            solar=self.solar or None,
+            adjust=adjust,
         )
 
-    async def _async_update_data(self) -> dict[str, Any]:
+    async def _prices(self) -> None:
+        """Spot prices → what the household actually pays per kWh."""
         points = await self.prices.async_get()
-        self.price_hours = hourly_prices(points)
+        self.spot_hours = hourly_prices(points)
+        tariff = tariff_from_options(self.options)
+        if tariff.mode == "fixed" and not self.spot_hours:
+            start = dt_util.now().replace(minute=0, second=0, microsecond=0)
+            self.price_hours = fixed_prices([start + timedelta(hours=i) for i in range(PLAN_HOURS)], tariff)
+        else:
+            self.price_hours = effective_prices(self.spot_hours, tariff)
+
+    async def _house_history(self) -> dict[datetime, float]:
+        meter = house_meter(self.options)
+        if not meter:
+            return {}
+        now = dt_util.now()
+        if self._house_fetched is None or now - self._house_fetched > timedelta(minutes=30):
+            self._house_fetched = now
+            self._house_kwh = await async_house_hourly_kwh(self.hass, meter)
+        return self._house_kwh
+
+    async def _limit_peaks(self) -> None:
+        """Spread heating between rooms so the month's capacity step holds."""
+        cfg = peak_from_options(self.options)
+        if cfg is None or not self.plans:
+            self.peak_state = None
+            return
+        hours = sorted({h.start for p in self.plans.values() for h in p.hours})
+        if not hours:
+            return
+        hourly = await self._house_history()
+        if hourly:
+            caps, state = plan_caps(cfg, hourly, hours, dt_util.now())
+            base = base_load(hourly, heating_share=0.0)
+            # the history already contains today's heating; only the rest of the house is "base"
+            heat_now = sum(p.hours[0].kwh for p in self.plans.values() if p.hours)
+            base = {h: max(0.0, v - heat_now * 0.5) for h, v in base.items()}
+        else:
+            caps, state = heaters_only_caps(cfg, hours)
+            base = {}
+        zones = {zid: self.zone(zid) for zid in self.plans}
+        priority = {
+            z[CONF_ZONE_ID]: int(z.get("priority", 0) or 0) for z in self.zone_configs
+        }
+        cuts = limit(zones, self.plans, caps, base, priority)
+        for zid, zc in cuts.items():
+            zone = zones[zid]
+            try:
+                self.plans[zid] = self.plan_zone(
+                    zid, zone=zone, adjust=lambda slots, z=zone, c=zc: apply_cuts(z, slots, c)
+                )
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Could not apply peak limits to %s", zid)
+        state.shed = sorted(self._shed)
+        self.peak_state = state
+
+    def _realtime_guard(self) -> None:
+        """Live whole-house power above the cap → set back low-priority rooms for a while."""
+        meter = house_meter(self.options)
+        state = self.peak_state
+        if not meter or state is None or state.cap_kw is None:
+            self._shed.clear()
+            return
+        st = self.hass.states.get(meter)
+        kw = _float(st.state) if st else None
+        if kw is None:
+            return
+        if (st.attributes.get("unit_of_measurement") or "W") == "W":
+            kw /= 1000
+        now = dt_util.now()
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        so_far = self._house_kwh.get(hour, 0.0) * (now.minute / 60)
+        projected = so_far + kw * (1 - now.minute / 60)
+        zones = [
+            {
+                "zone_id": zid,
+                "priority": int(next((z.get("priority", 0) for z in self.zone_configs if z[CONF_ZONE_ID] == zid), 0) or 0),
+                "kw": self.heater_kw(zid),
+                "protected": bool(p.hours and R_PROTECTED in p.hours[0].reasons),
+            }
+            for zid, p in self.plans.items()
+        ]
+        held = {z for z, until in self._shed.items() if until > now}
+        shed = set(realtime_shed(projected, state.cap_kw, zones, currently_shed=list(self._shed)))
+        shed |= held  # minimum hold time
+        self._shed = {z: self._shed.get(z, now + timedelta(minutes=10)) for z in shed}
+
+    async def _async_update_data(self) -> dict[str, Any]:
+        await self._prices()
         await self._fetch_outdoor()
         self.away = self._is_away()
         self.plans = {}
+        failed: set[str] = set()
         for cfg in self.zone_configs:
             zid = cfg[CONF_ZONE_ID]
             try:
                 self.plans[zid] = self.plan_zone(zid)
             except Exception:  # noqa: BLE001 - one broken zone must not stop the rest
                 _LOGGER.exception("Planning failed for zone %s", zid)
-                await self._restore(zid)
-                continue
-            await self._apply(zid, self.plans[zid])
+                failed.add(zid)
+        try:
+            await self._limit_peaks()
+            self._realtime_guard()
+        except Exception:  # noqa: BLE001 - peak limiting is a refinement
+            _LOGGER.exception("Capacity-tariff limiting failed")
+        for zid in failed:
+            await self._restore(zid)
+        for zid, plan in self.plans.items():
+            await self._apply(zid, plan)
         return {"updated": dt_util.now().isoformat()}
 
     # ------------------------------------------------------------------ control
@@ -492,6 +641,9 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hour = plan.hours[0]
         off = hour.target is None or (zone.is_percent and hour.target <= 0)
         value = None if hour.target is None else self._round(hour.target, step)
+        if zone_id in self._shed and value is not None and not off:
+            # live capacity guard: briefly lower this room while the house is at its cap
+            value = self._round(max(zone.min_value, value - (20 if zone.is_percent else 2)), step)
 
         # Safety floor with hysteresis (needs a room temperature).
         room = self.room_temperature(zone_id)
@@ -559,6 +711,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if zone_id is None:
             rules = self.state.setdefault("rules", {})
             rules.update({k: v for k, v in settings.items() if k in TUNABLE_RULES})
+            if "optimize" in settings:
+                self.state["optimize"] = bool(settings["optimize"])
         else:
             st = self.zone_state(zone_id)
             st["settings"].update({k: v for k, v in settings.items() if k in TUNABLE_ZONE})
@@ -654,6 +808,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------------ export
 
+    def _tariff_export(self) -> dict[str, Any]:
+        tariff = tariff_from_options(self.options)
+        lang = "nb" if (self.hass.config.language or "").startswith(("nb", "no", "nn")) else "en"
+        return {"mode": tariff.mode, "label": describe_tariff(tariff, lang), **tariff.as_dict()}
+
     def export(self) -> dict[str, Any]:
         """Everything the card needs, JSON serialisable."""
         levels = classify_prices(self.price_hours, self.rules())
@@ -696,8 +855,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "currency": self.hass.config.currency,
             "price_unit": self.prices.unit,
             "price_source": self.prices.description,
-            "price_extra": extra,
+            "price_extra": 0.0,  # already part of the (effective) prices
+            "price_extra_configured": extra,
             "rules": asdict(self.rules()),
+            "optimize": self.optimize,
+            "tariff": self._tariff_export(),
+            "peak": self.peak_state.as_dict() if self.peak_state else None,
             "away": self.away,
             "history": bool(self.options.get(CONF_USE_HISTORY, False)),
             "house": self.options.get(CONF_HOUSE),

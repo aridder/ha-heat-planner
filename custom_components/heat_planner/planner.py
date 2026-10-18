@@ -313,6 +313,7 @@ def build_plan(
     solar: dict[datetime, float] | None = None,
     kw_cap: dict[datetime, float] | None = None,
     optimizer_weights=None,
+    adjust=None,
 ) -> Plan:
     """Build an hourly plan starting at the hour containing ``start``.
 
@@ -424,6 +425,9 @@ def build_plan(
             used = "optimize"
         except Exception:  # noqa: BLE001 - never lose the plan: keep the rules result
             pass
+    if adjust is not None:
+        # e.g. capacity-tariff cuts decided across all zones; simulated like the rest
+        adjust(slots)
     _simulate_with(zone, slots, room_temp, outdoor or {}, outdoor_default, solar)
 
     # Baseline: same schedule, no price logic, nobody away.
