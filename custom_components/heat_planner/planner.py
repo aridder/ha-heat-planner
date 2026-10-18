@@ -207,12 +207,30 @@ class Plan:
     baseline_cost: float | None
     kwh: float
     baseline_kwh: float
+    # Degree-hours the predicted room temperature is below the comfort reference
+    # (schedule, or the away floor). None when no temperature is known or for
+    # percent zones (no temperature reference).
+    comfort_deficit: float | None = None
+    baseline_comfort_deficit: float | None = None
+    method: str = "rules"
 
     @property
     def savings(self) -> float | None:
         if self.cost is None or self.baseline_cost is None:
             return None
         return self.baseline_cost - self.cost
+
+    @property
+    def extra_kwh(self) -> float:
+        """Energy the plan uses beyond the baseline (pre-heat shows up here)."""
+        return round(self.kwh - self.baseline_kwh, 3)
+
+    @property
+    def savings_pct(self) -> float | None:
+        sav = self.savings
+        if sav is None or not self.baseline_cost or self.baseline_cost <= 0:
+            return None
+        return round(100.0 * sav / self.baseline_cost, 1)
 
     def as_dict(self) -> dict:
         return {
@@ -223,6 +241,11 @@ class Plan:
             "savings": self.savings,
             "kwh": self.kwh,
             "baseline_kwh": self.baseline_kwh,
+            "extra_kwh": self.extra_kwh,
+            "savings_pct": self.savings_pct,
+            "comfort_deficit": self.comfort_deficit,
+            "baseline_comfort_deficit": self.baseline_comfort_deficit,
+            "method": self.method,
         }
 
 
@@ -248,6 +271,31 @@ def _clamp(v: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, v))
 
 
+def is_protected(zone: ZoneConfig, when: datetime) -> bool:
+    """Whether ``when`` falls in the zone's protected window (no price reductions)."""
+    pf, pt = zone.protected_from_hour, zone.protected_to_hour
+    h = when.hour
+    return (pf <= h < pt) if pf <= pt else (h >= pf or h < pt)
+
+
+def comfort_reference(zone: ZoneConfig, slot: PlanHour) -> float:
+    """The comfort reference of an hour: the schedule, or the away floor when away."""
+    if R_AWAY in slot.reasons:
+        if zone.is_percent:
+            return _clamp(slot.scheduled + zone.away_offset, zone.min_value, zone.max_value)
+        return _clamp(
+            min(slot.scheduled, zone.comfort + zone.away_offset), zone.min_value, zone.max_value
+        )
+    return _clamp(slot.scheduled, zone.min_value, zone.max_value)
+
+
+def comfort_deficit(zone: ZoneConfig, slots: list[PlanHour], refs: list[float]) -> float | None:
+    """Degree-hours the predicted temperature ends an hour below its reference."""
+    if zone.is_percent or any(s.predicted is None for s in slots):
+        return None
+    return round(sum(max(0.0, r - s.predicted) for s, r in zip(slots, refs)), 2)  # type: ignore[operator]
+
+
 def build_plan(
     zone: ZoneConfig,
     schedule: dict[int, list[float]],
@@ -261,8 +309,17 @@ def build_plan(
     room_temp: float | None = None,
     outdoor: dict[datetime, float] | None = None,
     outdoor_default: float = 5.0,
+    method: str = "rules",
+    solar: dict[datetime, float] | None = None,
+    kw_cap: dict[datetime, float] | None = None,
+    optimizer_weights=None,
 ) -> Plan:
     """Build an hourly plan starting at the hour containing ``start``.
+
+    ``method="optimize"`` lets :func:`optimizer.optimize_zone` re-choose the
+    targets of the rule plan (needs ``room_temp``; otherwise the rules result is
+    used). ``solar`` (0..1 per hour) and ``kw_cap`` (kW per hour) are used by the
+    optimiser and, where supported, by the room simulation.
 
     ``prices`` must be hourly (see :func:`hourly_prices`) and keyed by
     timezone-aware local datetimes. ``away_now`` only affects the first hour
@@ -354,7 +411,20 @@ def build_plan(
         )
 
     _cap_off_runs(zone, slots)
-    _simulate(zone, slots, room_temp, outdoor or {}, outdoor_default)
+    refs = [comfort_reference(zone, s) for s in slots]
+    used = "rules"
+    if method == "optimize" and room_temp is not None:
+        from .optimizer import optimize_zone  # local import: optimizer imports planner
+
+        try:
+            slots = optimize_zone(
+                zone, slots, prices, room_temp, outdoor or {}, outdoor_default,
+                solar=solar, kw_cap=kw_cap, weights=optimizer_weights,
+            )
+            used = "optimize"
+        except Exception:  # noqa: BLE001 - never lose the plan: keep the rules result
+            pass
+    _simulate_with(zone, slots, room_temp, outdoor or {}, outdoor_default, solar)
 
     # Baseline: same schedule, no price logic, nobody away.
     base_slots = [
@@ -369,7 +439,8 @@ def build_plan(
         )
         for s in slots
     ]
-    _simulate(zone, base_slots, room_temp, outdoor or {}, outdoor_default)
+    # Same model, start temperature and weather as the plan, so pre-heat energy counts.
+    _simulate_with(zone, base_slots, room_temp, outdoor or {}, outdoor_default, solar)
 
     def total(items: list[PlanHour]) -> tuple[float | None, float]:
         kwh = sum(i.kwh for i in items)
@@ -379,7 +450,82 @@ def build_plan(
 
     cost, kwh = total(slots)
     bcost, bkwh = total(base_slots)
-    return Plan(zone.zone_id, slots, cost, bcost, round(kwh, 3), round(bkwh, 3))
+    return Plan(
+        zone.zone_id, slots, cost, bcost, round(kwh, 3), round(bkwh, 3),
+        comfort_deficit=comfort_deficit(zone, slots, refs),
+        baseline_comfort_deficit=comfort_deficit(zone, base_slots, refs),
+        method=used,
+    )
+
+
+def _simulate_with(
+    zone: ZoneConfig,
+    slots: list[PlanHour],
+    room_temp: float | None,
+    outdoor: dict[datetime, float],
+    outdoor_default: float,
+    solar: dict[datetime, float] | None,
+) -> None:
+    """Call :func:`_simulate`, passing ``solar`` when the simulation supports it."""
+    if solar:
+        _simulate(zone, slots, room_temp, outdoor, outdoor_default, solar=solar)
+    else:
+        _simulate(zone, slots, room_temp, outdoor, outdoor_default)
+
+
+def explain_savings(plan: Plan, lang: str = "nb", currency: str | None = None) -> str:
+    """An honest one-line summary of what price control does to cost, energy and comfort.
+
+    Small savings are called out as "almost nothing", extra energy from
+    pre-heating and any loss of comfort are always mentioned.
+    """
+    nb = not lang.lower().startswith("en")
+    cur = currency if currency is not None else ("kr" if nb else "")
+
+    def num(v: float, d: int) -> str:
+        txt = f"{v:.{d}f}"
+        return txt.replace(".", ",") if nb else txt
+
+    def money(v: float) -> str:
+        return f"{num(v, 2)} {cur}".strip()
+
+    sav = plan.savings
+    if sav is None:
+        return (
+            "Mangler priser – kan ikke beregne besparelse"
+            if nb
+            else "No prices – savings cannot be estimated"
+        )
+    pct = plan.savings_pct or 0.0
+    extra = plan.extra_kwh
+    colder = None
+    if plan.comfort_deficit is not None and plan.baseline_comfort_deficit is not None:
+        colder = plan.comfort_deficit - plan.baseline_comfort_deficit
+
+    if sav < -0.005:
+        return (
+            f"Prisstyring koster ca. {money(-sav)} mer i dag"
+            if nb
+            else f"Price control costs about {money(-sav)} more today"
+        )
+    if sav < 0.5 and pct < 3.0:
+        return (
+            "Prisstyring sparer nesten ingenting i dag"
+            if nb
+            else "Price control saves almost nothing today"
+        )
+    parts = [f"Sparer ca. {money(sav)}" if nb else f"Saves about {money(sav)}"]
+    if extra >= 0.05:
+        parts.append(f"men bruker {num(extra, 1)} kWh mer" if nb else f"but uses {num(extra, 1)} kWh more")
+    elif extra <= -0.05:
+        parts.append(f"og bruker {num(-extra, 1)} kWh mindre" if nb else f"and uses {num(-extra, 1)} kWh less")
+    if colder is not None and colder >= 0.5:
+        parts.append(
+            f"og rommet er {num(colder, 1)} gradtimer kaldere"
+            if nb
+            else f"and the room is {num(colder, 1)} degree-hours colder"
+        )
+    return ", ".join(parts)
 
 
 def _cap_off_runs(zone: ZoneConfig, slots: list[PlanHour]) -> None:
