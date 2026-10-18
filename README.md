@@ -276,9 +276,12 @@ Percent rooms change by 5 percentage points. A night setback in your own day cur
 ```yaml
 type: custom:heat-planner-card
 zones: [stue, kjokken]   # optional – default: all rooms
-hours: 36                # optional – hours shown, default 36
+hours: 36                # optional – 12–48 hours shown, default 36
 entry_id: 01ABC…         # optional – if you have more than one Heat Planner
+show_help: true          # optional – show the "How it works" button, default true
 ```
+
+Everything above can also be set in the card's visual editor.
 
 The guide can also live on its own view:
 
