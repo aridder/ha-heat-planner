@@ -501,7 +501,9 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         now = dt_util.now()
         if self._house_fetched is None or now - self._house_fetched > timedelta(minutes=30):
             self._house_fetched = now
-            self._house_kwh = await async_house_hourly_kwh(self.hass, meter)
+            self._house_kwh = await async_house_hourly_kwh(
+                self.hass, meter, energy_statistic=(self.options.get("energy") or {}).get("house_energy_statistic")
+            )
         return self._house_kwh
 
     async def _limit_peaks(self) -> None:

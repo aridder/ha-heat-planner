@@ -76,8 +76,52 @@ def house_meter(options: dict[str, Any]) -> str | None:
 # --------------------------------------------------------------------------- history
 
 
-async def async_house_hourly_kwh(hass: HomeAssistant, entity_id: str, days: int = 45) -> dict[datetime, float]:
-    """Hourly energy (kWh) from the long-term statistics of a power sensor (W or kW)."""
+async def _energy_statistic_hourly(
+    hass: HomeAssistant, start: datetime, statistic_id: str | None
+) -> dict[datetime, float]:
+    """Hourly kWh from an energy statistic (e.g. Tibber's ``tibber:energy_consumption_<home>``).
+
+    Tibber imports the full consumption history this way, so a newly connected
+    meter still knows the month's real peaks. With no id given, the Tibber
+    statistic with the most energy in the last week is used.
+    """
+    from homeassistant.components.recorder import get_instance
+    from homeassistant.components.recorder.statistics import list_statistic_ids, statistics_during_period
+
+    ids: list[str]
+    if statistic_id:
+        ids = [statistic_id]
+    else:
+        meta = await get_instance(hass).async_add_executor_job(
+            lambda: list_statistic_ids(hass, statistic_type="sum")
+        )
+        ids = [m["statistic_id"] for m in meta if str(m["statistic_id"]).startswith("tibber:energy_consumption_")]
+    if not ids:
+        return {}
+    stats = await get_instance(hass).async_add_executor_job(
+        statistics_during_period, hass, start, None, set(ids), "hour", None, {"change"}
+    )
+    best: dict[datetime, float] = {}
+    best_recent = -1.0
+    week_ago = dt_util.now() - timedelta(days=7)
+    for sid in ids:
+        out: dict[datetime, float] = {}
+        for row in stats.get(sid, []):
+            change, ts = row.get("change"), row.get("start")
+            if change is None or ts is None or not 0 <= float(change) < 100:
+                continue  # resets and import glitches show up as negative or huge jumps
+            when = dt_util.as_local(dt_util.utc_from_timestamp(ts) if isinstance(ts, (int, float)) else ts)
+            out[hour_key(when)] = float(change)
+        recent = sum(v for k, v in out.items() if k >= week_ago)
+        if recent > best_recent:
+            best, best_recent = out, recent
+    return best
+
+
+async def async_house_hourly_kwh(
+    hass: HomeAssistant, entity_id: str, days: int = 45, energy_statistic: str | None = None
+) -> dict[datetime, float]:
+    """Hourly house energy (kWh): an energy statistic where available, else the power sensor's mean."""
     try:
         from homeassistant.components.recorder import get_instance
         from homeassistant.components.recorder.statistics import statistics_during_period
@@ -87,14 +131,14 @@ async def async_house_hourly_kwh(hass: HomeAssistant, entity_id: str, days: int 
     unit = (st.attributes.get("unit_of_measurement") if st else None) or "W"
     scale = 1 / 1000 if unit == "W" else 1.0
     start = dt_util.start_of_local_day() - timedelta(days=days)
+    out: dict[datetime, float] = {}
     try:
         stats = await get_instance(hass).async_add_executor_job(
             statistics_during_period, hass, start, None, {entity_id}, "hour", None, {"mean"}
         )
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("No statistics for %s: %s", entity_id, err)
-        return {}
-    out: dict[datetime, float] = {}
+        stats = {}
     for row in stats.get(entity_id, []):
         mean = row.get("mean")
         ts = row.get("start")
@@ -103,6 +147,13 @@ async def async_house_hourly_kwh(hass: HomeAssistant, entity_id: str, days: int 
         when = dt_util.as_local(dt_util.utc_from_timestamp(ts) if isinstance(ts, (int, float)) else ts)
         # hour_key: both 02:00 hours of the autumn DST change kept apart
         out[hour_key(when)] = max(0.0, float(mean) * scale)
+    try:
+        energy = await _energy_statistic_hourly(hass, start, energy_statistic)
+    except Exception as err:  # noqa: BLE001 - the power sensor alone still works
+        _LOGGER.debug("No energy statistic: %s", err)
+        energy = {}
+    # the meter's own energy history wins where it exists (it covers the whole month)
+    out.update(energy)
     return out
 
 
