@@ -1,0 +1,85 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<title>Heat Planner docs harness</title>
+<!-- Renders the real card and help with a mock `hass` fed by make_mock.py (see shoot.py). -->
+<style>
+  :root { --primary-text-color:#1c1c1c; --secondary-text-color:#6b6b6b; --card-background-color:#fff;
+    --divider-color:rgba(0,0,0,.12); --primary-color:#03a9f4; --page:#f2f3f5; }
+  :root[data-theme="dark"] { --primary-text-color:#e6e6e6; --secondary-text-color:#9a9a9a; --card-background-color:#1c1c1e;
+    --divider-color:rgba(255,255,255,.12); --page:#111214; }
+  body { margin:0; padding:20px; font-family: Inter, "Segoe UI", system-ui, sans-serif; background:var(--page); }
+  heat-planner-card, heat-planner-help-card { display:block; max-width:900px; margin-bottom:20px; }
+</style>
+</head><body>
+<div id="root"></div>
+<script>
+const Q = new URLSearchParams(location.search);
+const LANG = Q.get("lang") || "en";
+if (Q.get("theme") === "dark") document.documentElement.dataset.theme = "dark";
+const MOCK = window.__MOCK;  // injected by shoot.py
+const entry = MOCK.entries[0];
+const zoneById = Object.fromEntries(entry.zones.map((z) => [z.zone_id, z]));
+window.__sent = [];
+const hass = {
+  language: LANG, locale: { language: LANG }, config: { time_zone: "Europe/Oslo", currency: "NOK" },
+  connection: {
+    subscribeMessage(cb) { setTimeout(() => cb({ entries: [entry] }), 10); return Promise.resolve(() => {}); },
+    sendMessagePromise(msg) {
+      window.__sent.push(msg);
+      if (msg.type === "heat_planner/get") return Promise.resolve({ entries: [entry] });
+      if (msg.type === "heat_planner/feedback") return Promise.resolve({ message: MOCK.feedback_message || "" });
+      return Promise.resolve({});
+    },
+  },
+  callWS(msg) {
+    window.__sent.push(msg);
+    if (msg.type === "heat_planner/preview") return Promise.resolve(zoneById[msg.zone_id].plan);
+    return Promise.resolve({ entries: [entry] });
+  },
+};
+</script>
+<script>
+// Minimal <ha-icon> stand-in: the Material Design Icons (Apache 2.0, @mdi/js 7.4.47) the guide uses.
+const MDI = {
+  "calendar-clock": "M15,13H16.5V15.82L18.94,17.23L18.19,18.53L15,16.69V13M19,8H5V19H9.67C9.24,18.09 9,17.07 9,16A7,7 0 0,1 16,9C17.07,9 18.09,9.24 19,9.67V8M5,21C3.89,21 3,20.1 3,19V5C3,3.89 3.89,3 5,3H6V1H8V3H16V1H18V3H19A2,2 0 0,1 21,5V11.1C22.24,12.36 23,14.09 23,16A7,7 0 0,1 16,23C14.09,23 12.36,22.24 11.1,21H5M16,11.15A4.85,4.85 0 0,0 11.15,16C11.15,18.68 13.32,20.85 16,20.85A4.85,4.85 0 0,0 20.85,16C20.85,13.32 18.68,11.15 16,11.15Z",
+  "chart-bell-curve-cumulative": "M4 19V20H22V22H2V2H4V17C7 17 10 15 12.1 11.4C15.1 6.4 18.4 4 22 4V6C19.2 6 16.5 8.1 13.9 12.5C11.3 16.6 7.7 19 4 19Z",
+  "home-account": "M12,3L2,12H5V20H19V12H22L12,3M12,8.75A2.25,2.25 0 0,1 14.25,11A2.25,2.25 0 0,1 12,13.25A2.25,2.25 0 0,1 9.75,11A2.25,2.25 0 0,1 12,8.75M12,15C13.5,15 16.5,15.75 16.5,17.25V18H7.5V17.25C7.5,15.75 10.5,15 12,15Z",
+  "home-thermometer": "M19 8C20.11 8 21 8.9 21 10V16.76C21.61 17.31 22 18.11 22 19C22 20.66 20.66 22 19 22C17.34 22 16 20.66 16 19C16 18.11 16.39 17.31 17 16.76V10C17 8.9 17.9 8 19 8M19 9C18.45 9 18 9.45 18 10V11H20V10C20 9.45 19.55 9 19 9M5 20V12H2L12 3L16.4 6.96C15.54 7.69 15 8.78 15 10V16C14.37 16.83 14 17.87 14 19L14.1 20H5Z",
+  "lightning-bolt": "M11 15H6L13 1V9H18L11 23V15Z",
+  "pencil-off": "M18.66,2C18.4,2 18.16,2.09 17.97,2.28L16.13,4.13L19.88,7.88L21.72,6.03C22.11,5.64 22.11,5 21.72,4.63L19.38,2.28C19.18,2.09 18.91,2 18.66,2M3.28,4L2,5.28L8.5,11.75L4,16.25V20H7.75L12.25,15.5L18.72,22L20,20.72L13.5,14.25L9.75,10.5L3.28,4M15.06,5.19L11.03,9.22L14.78,12.97L18.81,8.94L15.06,5.19Z",
+  "shield-check": "M10,17L6,13L7.41,11.59L10,14.17L16.59,7.58L18,9M12,1L3,5V11C3,16.55 6.84,21.74 12,23C17.16,21.74 21,16.55 21,11V5L12,1Z",
+  "thermostat": "M16.95,16.95L14.83,14.83C15.55,14.1 16,13.1 16,12C16,11.26 15.79,10.57 15.43,10L17.6,7.81C18.5,9 19,10.43 19,12C19,13.93 18.22,15.68 16.95,16.95M12,5C13.57,5 15,5.5 16.19,6.4L14,8.56C13.43,8.21 12.74,8 12,8A4,4 0 0,0 8,12C8,13.1 8.45,14.1 9.17,14.83L7.05,16.95C5.78,15.68 5,13.93 5,12A7,7 0 0,1 12,5M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12C22,6.47 17.5,2 12,2Z",
+};
+// <ha-card> stand-in: a block with the card background, like Home Assistant's.
+customElements.define("ha-card", class extends HTMLElement {
+  connectedCallback() {
+    Object.assign(this.style, { display: "block", background: "var(--card-background-color)", borderRadius: "12px",
+      color: "var(--primary-text-color)", boxShadow: "0 1px 3px rgba(0,0,0,.08)" });
+  }
+});
+customElements.define("ha-icon", class extends HTMLElement {
+  connectedCallback() {
+    const d = MDI[(this.getAttribute("icon") || "").replace("mdi:", "")];
+    this.style.display = "inline-flex";
+    this.innerHTML = d ? `<svg viewBox="0 0 24 24" style="width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)"><path fill="currentColor" d="${d}"/></svg>` : "";
+  }
+});
+</script>
+<script src="../../custom_components/heat_planner/frontend/heat-planner-help.js"></script>
+<script src="../../custom_components/heat_planner/frontend/heat-planner-card.js"></script>
+<script>
+const root = document.getElementById("root");
+if (Q.get("help")) {
+  try { localStorage.setItem("heat-planner-help-lang", LANG); } catch (e) { /* ignore */ }
+  const h = document.createElement("heat-planner-help-card");
+  h.setConfig({ language: LANG });
+  root.append(h);
+  h.hass = hass;
+} else {
+  const c = document.createElement("heat-planner-card");
+  c.setConfig({});
+  root.append(c);
+  c.hass = hass;
+}
+</script>
+</body></html>
