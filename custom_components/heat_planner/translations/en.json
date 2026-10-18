@@ -131,7 +131,7 @@
     "error": {
       "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
       "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
-      "ai_invalid": "Could not read the answer. Paste the whole answer, including the { and } characters.",
+      "ai_invalid": "Could not read the answer. Paste the whole answer, from the first curly bracket to the last.",
       "ai_no_zones": "The answer did not contain any of the thermostats found. Try again."
     }
   },
@@ -341,7 +341,7 @@
       "duplicate": "A zone with this name already exists.",
       "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
       "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
-      "ai_invalid": "Could not read the answer. Paste the whole answer, including the { and } characters.",
+      "ai_invalid": "Could not read the answer. Paste the whole answer, from the first curly bracket to the last.",
       "ai_no_zones": "The answer did not contain any of the thermostats found. Try again.",
       "invalid_notify": "Not a notify service. Use e.g. notify.mobile_app_my_phone."
     },

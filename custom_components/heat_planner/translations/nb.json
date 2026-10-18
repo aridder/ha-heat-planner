@@ -131,7 +131,7 @@
     "error": {
       "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
       "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
-      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, også tegnene { og }.",
+      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, fra første til siste krøllparentes.",
       "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen."
     }
   },
@@ -341,7 +341,7 @@
       "duplicate": "Det finnes allerede en sone med dette navnet.",
       "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
       "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
-      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, også tegnene { og }.",
+      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, fra første til siste krøllparentes.",
       "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen.",
       "invalid_notify": "Ikke en varslingstjeneste. Bruk f.eks. notify.mobile_app_min_telefon."
     },
