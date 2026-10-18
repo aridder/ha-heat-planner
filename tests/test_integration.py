@@ -249,3 +249,30 @@ async def test_house_prior_and_estimated_power_in_export(hass: HomeAssistant, se
     assert stue["heater_kw_source"] == "estimate" and stue["heater_kw"] > 0
     bad = next(z for z in data["zones"] if z["zone_id"] == "bad")
     assert bad["heater_kw_source"] == "config" and bad["heater_kw"] == 0.4
+
+
+async def test_presence_ignores_unknown_persons(hass: HomeAssistant, setup_states) -> None:
+    """A person without a working tracker must not keep the house 'home' forever."""
+    hass.states.async_set("person.a", "not_home")
+    hass.states.async_set("person.guest", "unknown")
+    entry = _entry()
+    entry.add_to_hass(hass)
+    hass.config_entries.async_update_entry(
+        entry, options={**entry.options, "presence_entities": ["person.a", "person.guest"]}
+    )
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coord = entry.runtime_data
+    assert coord._is_away() is True
+    hass.states.async_set("person.a", "home")
+    assert coord._is_away() is False
+    hass.states.async_set("person.a", "unavailable")
+    assert coord._is_away() is False  # nothing known -> assume someone is home
+
+
+async def test_presence_defaults_skip_unknown(hass: HomeAssistant) -> None:
+    from custom_components.heat_planner.onboarding import presence_defaults
+
+    hass.states.async_set("person.a", "home", {"device_trackers": ["device_tracker.a"]})
+    hass.states.async_set("person.b", "unknown", {"device_trackers": ["device_tracker.b"]})
+    assert presence_defaults(hass) == ["person.a"]

@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "heat_planner"
-VERSION: Final = "0.1.0"
+VERSION: Final = "0.1.1"
 
 PLATFORMS: Final = ["sensor", "switch", "number", "select"]
 

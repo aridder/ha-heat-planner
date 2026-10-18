@@ -85,7 +85,10 @@ def price_options(hass: HomeAssistant) -> list[PriceOption]:
 
 
 def presence_defaults(hass: HomeAssistant) -> list[str]:
-    persons = hass.states.async_all("person")
+    persons = [
+        p for p in hass.states.async_all("person")
+        if p.state not in ("unknown", "unavailable")
+    ]
     with_phone = [p.entity_id for p in persons if p.attributes.get("device_trackers")]
     return with_phone or [p.entity_id for p in persons]
 

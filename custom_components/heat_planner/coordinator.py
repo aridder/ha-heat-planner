@@ -257,16 +257,18 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         ids = list(self.options.get(CONF_PRESENCE, []))
         if not ids:
             return False
+        known = 0
         for entity_id in ids:
             st = self.hass.states.get(entity_id)
             if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
-                return False  # unknown presence -> assume someone is home
+                continue  # a person without a working tracker says nothing
+            known += 1
             if entity_id.startswith("zone."):
                 if (_float(st.state) or 0) > 0:
                     return False
             elif st.state in (STATE_HOME, STATE_ON):
                 return False
-        return True
+        return known > 0  # nothing known -> assume someone is home
 
     def room_temperature(self, zone_id: str) -> float | None:
         cfg = next(z for z in self.zone_configs if z[CONF_ZONE_ID] == zone_id)
