@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+Changes found with the new strategy benchmark (`python -m tools.bench`, see `tools/bench/RESULTS.md`).
+
+- **Optimal start (warm-up):** heating now starts early enough, from the room model, that a room *reaches* the next schedule step on time instead of starting to warm when it begins (slow floors were 1–2 °C under the schedule for hours after every step). Works in rules and optimiser mode and under Norgespris; the optimiser may warm up earlier, in cheaper hours. Savings are compared with the schedule *including* its warm-up, so the warm-up's energy is not counted as a cost of price control. New reason in the card: "Warming up to reach the schedule on time".
+- **Percent zones (regulators):** price shifting now moves heat to the day's cheaper hours instead of only removing it in the expensive ones (the bathroom ended up colder than with a plain schedule).
+
 ## 0.4.0
 
 The first published release. It contains everything since 0.1.0.

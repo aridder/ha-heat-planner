@@ -33,6 +33,7 @@ from custom_components.heat_planner.control import (
     too_cold,
 )
 from custom_components.heat_planner.optimizer import R_OPTIMIZED
+from custom_components.heat_planner.peak import PeakConfig
 from custom_components.heat_planner.planner import (
     R_EXPENSIVE,
     R_EXTREME_OFF,
@@ -332,8 +333,13 @@ def test_peak_limiting_never_raises_the_monthly_top3(name: str) -> None:
     on, off = run(sc), run(replace(sc, peak_limit=False))
     for month, value in on.kpi["top3"].items():
         assert value <= off.kpi["top3"][month] + 0.05
-    if name == "peak_feasible":  # heating-driven peaks: limiting lowers them
-        assert on.kpi["top3"]["2026-10"] < off.kpi["top3"]["2026-10"] - 0.1
+    if name == "peak_feasible":  # heating-driven peaks: limiting lowers them into the 2–5 kW step
+        # (with optimal start the warm-ups are spread out and the unlimited house may
+        # already stay in the step – 4.47 kW here; without it limiting took 5.4 → 4.95)
+        step_limit = 5.0 - PeakConfig().margin_kw
+        assert on.kpi["top3"]["2026-10"] < min(off.kpi["top3"]["2026-10"] - 0.1, step_limit) + 1e-9 or (
+            off.kpi["top3"]["2026-10"] <= step_limit and on.kpi["top3"]["2026-10"] <= step_limit
+        )
     assert on.ok(), on.violations
 
 

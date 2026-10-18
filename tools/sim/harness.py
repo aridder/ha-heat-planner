@@ -57,6 +57,7 @@ from custom_components.heat_planner.planner import (
     R_PREHEAT,
     R_PREHEAT_EXTREME,
     Plan,
+    PlanHour,
     PriceRules,
     ThermalModel,
     ZoneConfig,
@@ -284,6 +285,8 @@ class Controller:
         else:
             base = dict(comfort=spec.comfort)
         base["heater_kw"] = spec.kw
+        if "warmup" in ZoneConfig.__dataclass_fields__:
+            base["warmup"] = True  # as the coordinator
         settings = {k: v for k, v in st["settings"].items() if k in TUNABLE}
         zc = ZoneConfig(zone_id=zid, name=zid, mode=spec.mode, thermal=st["thermal"], **{**base, **settings})
         if zc.away_until_hour == AUTO_HOUR:
@@ -603,8 +606,11 @@ class Controller:
                 base_q = plan_q = None
             zone = self.zone(zid, now)
             kw = dict(outdoor=self.outdoor, outdoor_default=self.outdoor_now(now), solar=self.solar or None)
+            if "warmup" in PlanHour.__dataclass_fields__:
+                kw["warmup"] = plan.hours[0].warmup
             base, base_q = baseline_hour(zone, self.schedule(zid), self.state["zones"][zid]["overrides"],
                                          self.price_hours, hour, room_temp=base_t, queue=base_q, **kw)
+            kw.pop("warmup", None)
             ours, plan_q = simulate_hour(zone, plan.hours[0], room_temp=plan_t, queue=plan_q, **kw)
             if base.cost is None or ours.cost is None:
                 shadow.pop(zid, None)
@@ -640,6 +646,10 @@ class Controller:
             for plan in self.plans.values():
                 if plan.hours and PRICE_REASONS & set(plan.hours[0].reasons):
                     self.price_hours_applied += 1
+
+
+def bd_mode(world: World, zid: str) -> str:
+    return world.base_devices[zid].mode
 
 
 def _hours_from(start: datetime, n: int) -> list[datetime]:
@@ -793,7 +803,15 @@ def run(sc: Scenario) -> Result:
         for zid in zones:
             zone = ctl.zone(zid, now)
             v, _ = scheduled_value(zone, ctl.schedule(zid), {}, now)
+            # the schedule's own optimal start (the reference house plans it; no price logic)
+            rp = ref.plans.get(zid)
+            if rp and rp.hours and getattr(rp.hours[0], "warmup", None) is not None and bd_mode(world, zid) == "setpoint":
+                v = max(v, rp.hours[0].warmup)
             bd = world.base_devices[zid]
+            if ctl.up and ctl.manual_until(zid, now):
+                # someone set this thermostat by hand: the schedule-only house gets the same
+                # change for as long as it holds (realised savings compare like with like)
+                v = world.devices[zid].value if bd.mode == "percent" else world.devices[zid].setpoint
             if bd.mode == "percent":
                 bd.value = v
             else:

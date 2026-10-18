@@ -204,6 +204,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         else:
             base = dict(comfort=float(cfg.get(CONF_COMFORT, 21.0)))
         base["heater_kw"] = self.heater_kw(zone_id)
+        base["warmup"] = True  # optimal start before schedule steps (see planner.warmup_targets)
         settings = {k: v for k, v in st.get("settings", {}).items() if k in TUNABLE_ZONE}
         stored = ThermalModel(**{
             k: v for k, v in st.get("thermal", {}).items()
@@ -733,6 +734,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     zone, self.schedule(zid), self.overrides(zid), self.price_hours, hour,
                     room_temp=base_t, queue=base_q, outdoor=self.outdoor,
                     outdoor_default=self.outdoor_now(), solar=self.solar or None,
+                    warmup=plan.hours[0].warmup,
                 )
                 ours, plan_q = simulate_hour(
                     zone, plan.hours[0], room_temp=plan_t, queue=plan_q, outdoor=self.outdoor,
