@@ -1,7 +1,7 @@
 /* Heat Planner card – price & presence aware heating schedules.
  * No build step, no dependencies. Talks to the heat_planner websocket API.
  */
-const VERSION = "0.3.0";
+const VERSION = "0.4.0";
 const SETUP_URL = "https://my.home-assistant.io/redirect/config_flow_start/?domain=heat_planner";
 const INTEGRATION_URL = "https://my.home-assistant.io/redirect/integration/?domain=heat_planner";
 const STALE_MS = 20 * 60e3; // the integration refreshes every 5 minutes
