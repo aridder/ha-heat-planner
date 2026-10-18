@@ -38,8 +38,10 @@ from .planner import (
     R_PREHEAT,
     R_PREHEAT_EXTREME,
     R_PROTECTED,
+    R_WARMUP,
     PlanHour,
     ZoneConfig,
+    _apply_warmup,
     comfort_reference,
     is_protected,
 )
@@ -106,6 +108,7 @@ def optimize_zone(
     weights: OptimizerWeights | None = None,
     *,
     initial_off_run: int = 0,
+    warmup: dict[int, float] | None = None,
 ) -> list[PlanHour]:
     """Return new slots with optimised targets (simulation fields are not filled).
 
@@ -113,15 +116,27 @@ def optimize_zone(
     right before the first slot (plans are rebuilt often; the ``max_off_hours``
     run must not restart at every rebuild).
 
+    ``warmup`` (see :func:`planner.warmup_targets`): hours before a schedule step whose
+    target an optimal-start thermostat would already raise. The comfort reference
+    follows that warm-up (the room is meant to *be* at the new target when the step
+    begins) and the warm-up target is one of the actions of those hours; the
+    optimiser may still warm up earlier, in cheaper hours.
+
     Falls back to ``slots`` unchanged when the room temperature is unknown,
     there are no prices, or ``price_aggressiveness`` is 0.
     """
     agg = max(0.0, min(2.0, zone.price_aggressiveness))
-    if room_temp is None or not slots or agg <= 0:
+
+    def fallback() -> list[PlanHour]:
+        if warmup:
+            _apply_warmup(zone, slots, warmup)  # nothing to optimise: still reach the schedule on time
         return slots
+
+    if room_temp is None or not slots or agg <= 0:
+        return fallback()
     known = [prices[s.start] for s in slots if prices.get(s.start) is not None]
     if not known:
-        return slots
+        return fallback()
     w = weights or OptimizerWeights()
     solar = solar or {}
     kw_cap = kw_cap or {}
@@ -153,8 +168,15 @@ def optimize_zone(
         away = R_AWAY in s.reasons
         ref = comfort_reference(zone, s)
         acts = _actions(zone, ref, shift_max, raise_max, no_lower, floor)
+        goal = (warmup or {}).get(i)
+        if goal is not None and not percent:
+            # comfort first: a warm-up hour holds at least the coming target (if the room
+            # was pre-heated earlier, in cheaper hours, the thermostat simply idles)
+            g = round(min(zone.max_value, goal) * 2) / 2
+            acts = sorted({a for a in acts if a is not None and a >= g - 1e-9} | {g})
         if (
             max_off
+            and goal is None
             and not no_lower
             and s.level in w.off_levels
             and (floor is None or ref >= floor)
@@ -187,9 +209,11 @@ def optimize_zone(
     temp = room_temp
     ref_flat: list[float] = []
     w_flat: list[float] = []
-    for h in hours:
+    warm = warmup or {}
+    for i, h in enumerate(hours):
+        aim = max(h.ref, warm[i]) if i in warm and not percent else h.ref
         for _ in range(SUBSTEPS):
-            temp = _sub(model, h, temp, _duty(model, h, temp, h.ref, percent))
+            temp = _sub(model, h, temp, _duty(model, h, temp, aim, percent))
             ref_flat.append(temp)
             w_flat.append(h.w_comfort)
     # Dead time: the state is the room temperature n_lag substeps ahead, so the
@@ -286,7 +310,7 @@ def optimize_zone(
                 best, best_act, best_t = cost, act, t_end
         run = run + 1 if best_act is None else 0
         temp = best_t
-        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4]))
+        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4], warm.get(i)))
     return out
 
 
@@ -452,7 +476,8 @@ def _finish(
 
 
 def _label(
-    zone: ZoneConfig, s: PlanHour, h: _Hour, act: float | None, ahead: list[PlanHour]
+    zone: ZoneConfig, s: PlanHour, h: _Hour, act: float | None, ahead: list[PlanHour],
+    warm: float | None = None,
 ) -> PlanHour:
     """Copy of ``s`` with the chosen target and consistent mode/reasons."""
     base_reasons = [r for r in s.reasons if r in ("schedule", "override", R_AWAY)]
@@ -465,6 +490,9 @@ def _label(
         # only call it an expensive hour when it is one; otherwise it is the optimiser's choice
         reasons += [R_EXPENSIVE, R_OPTIMIZED] if costly else [R_OPTIMIZED]
         mode = "save"
+    elif act > h.ref + 1e-9 and warm is not None and act <= warm + 1e-9:
+        reasons += [R_WARMUP, R_OPTIMIZED]  # reaching the next schedule step on time
+        mode = "preheat"
     elif act > h.ref + 1e-9:
         extreme_ahead = any(a.level == LEVEL_EXTREME for a in ahead)
         reasons += [R_PREHEAT_EXTREME if extreme_ahead else R_PREHEAT, R_OPTIMIZED]
