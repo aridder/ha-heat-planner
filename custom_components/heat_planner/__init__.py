@@ -24,6 +24,7 @@ from .const import (
     SCOPE_DAYS,
     SCOPE_WEEKDAYS,
     SCOPE_WEEKEND,
+    SIGNAL_ENTRIES_CHANGED,
     VERSION,
 )
 from .coordinator import HeatPlannerCoordinator
@@ -45,7 +46,7 @@ SCHEDULE_SCHEMA = vol.Schema(
         vol.Optional("scope", default=SCOPE_ALL): vol.In(
             [SCOPE_ALL, SCOPE_WEEKDAYS, SCOPE_WEEKEND, SCOPE_DAYS, SCOPE_DATE]
         ),
-        vol.Optional("days"): vol.All(cv.ensure_list, [vol.All(int, vol.Range(0, 6))]),
+        vol.Optional("days"): vol.All(cv.ensure_list, [vol.All(vol.Coerce(int), vol.Range(0, 6))]),
         vol.Optional("date"): cv.date,
     }
 )
@@ -153,6 +154,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: HeatPlannerConfigEntry) 
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
+    from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+    async_dispatcher_send(hass, SIGNAL_ENTRIES_CHANGED)
     return True
 
 
@@ -164,6 +168,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: HeatPlannerConfigEntry)
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         await entry.runtime_data.async_shutdown()
+        from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+        async_dispatcher_send(hass, SIGNAL_ENTRIES_CHANGED)
     return ok
 
 

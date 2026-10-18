@@ -52,6 +52,7 @@ from .planner import (
     default_schedule,
     fit_thermal,
     hourly_prices,
+    scheduled_value,
 )
 from .prices import PriceSource
 
@@ -92,6 +93,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.outdoor: dict[datetime, float] = {}
         self._outdoor_fetched: datetime | None = None
         self._applied: dict[str, dict[str, Any]] = {}
+        self._safety: dict[str, bool] = {}
         self._unsubs: list = []
 
     # ------------------------------------------------------------------ config
@@ -164,8 +166,15 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         stored = await self.store.async_load()
         if stored:
             self.state = stored
+        zones = self.state.setdefault("zones", {})
         for cfg in self.zone_configs:
-            self.zone_state(cfg[CONF_ZONE_ID])
+            zid = cfg[CONF_ZONE_ID]
+            mode = cfg.get(CONF_MODE, MODE_SETPOINT)
+            if zid in zones and zones[zid].get("mode", mode) != mode:
+                # schedules mean different things per mode (offsets vs percent)
+                _LOGGER.info("Zone %s changed control type, resetting its schedule", zid)
+                zones.pop(zid)
+            self.zone_state(zid)["mode"] = mode
         await self._save()
 
         watch = list(self.options.get(CONF_PRESENCE, []))
@@ -184,6 +193,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.hass.async_create_background_task(self.async_learn(), f"{DOMAIN}_learn")
 
     async def async_shutdown(self) -> None:
+        for zone_id in list(self._applied):
+            await self._restore(zone_id)
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
@@ -308,6 +319,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.plans[zid] = self.plan_zone(zid)
             except Exception:  # noqa: BLE001 - one broken zone must not stop the rest
                 _LOGGER.exception("Planning failed for zone %s", zid)
+                await self._restore(zid)
                 continue
             await self._apply(zid, self.plans[zid])
         return {"updated": dt_util.now().isoformat()}
@@ -324,95 +336,145 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.zone_state(zone_id).pop("manual_until", None)
         return None
 
+    def _cfg(self, zone_id: str) -> dict[str, Any]:
+        return next(z for z in self.zone_configs if z[CONF_ZONE_ID] == zone_id)
+
+    def _device(self, cfg: dict[str, Any]) -> tuple[bool, bool, float | None, float]:
+        """(available, is_off, value, step) for the controlled entity."""
+        if cfg.get(CONF_MODE) == MODE_PERCENT:
+            st = self.hass.states.get(cfg.get(CONF_NUMBER) or "")
+            if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+                return False, False, None, 1.0
+            val = _float(st.state)
+            step = _float(st.attributes.get("step")) or 1.0
+            return True, val is not None and val <= 0, val, step
+        st = self.hass.states.get(cfg.get(CONF_CLIMATE) or "")
+        if st is None or st.state in (STATE_UNAVAILABLE, STATE_UNKNOWN):
+            return False, False, None, 0.5
+        step = _float(st.attributes.get("target_temp_step")) or 0.5
+        if st.state == "off":
+            return True, True, None, step
+        return True, False, _float(st.attributes.get("temperature")), step
+
+    @staticmethod
+    def _round(value: float, step: float) -> float:
+        return round(round(value / step) * step, 2) if step > 0 else value
+
+    def _scheduled_now(self, zone_id: str) -> float:
+        zone = self.zone(zone_id)
+        value, _ = scheduled_value(zone, self.schedule(zone_id), self.overrides(zone_id), dt_util.now())
+        return max(zone.min_value, min(zone.max_value, value))
+
+    async def _write(self, cfg: dict[str, Any], off: bool, value: float | None, dev_off: bool) -> None:
+        if cfg.get(CONF_MODE) == MODE_PERCENT:
+            await self.hass.services.async_call(
+                "number", "set_value",
+                {"entity_id": cfg[CONF_NUMBER], "value": 0 if off else value}, blocking=True,
+            )
+            return
+        climate = cfg[CONF_CLIMATE]
+        if off:
+            await self.hass.services.async_call(
+                "climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": "off"}, blocking=True
+            )
+            return
+        if dev_off:
+            await self.hass.services.async_call(
+                "climate", "set_hvac_mode", {"entity_id": climate, "hvac_mode": "heat"}, blocking=True
+            )
+        await self.hass.services.async_call(
+            "climate", "set_temperature", {"entity_id": climate, "temperature": value}, blocking=True
+        )
+
+    async def _restore(self, zone_id: str) -> None:
+        """If we turned a zone off, give it back its scheduled heat."""
+        last = self._applied.get(zone_id)
+        if not last or not last.get("off"):
+            return
+        try:
+            cfg = self._cfg(zone_id)
+            available, dev_off, _, step = self._device(cfg)
+            if not available:
+                return
+            value = self._round(self._scheduled_now(zone_id), step)
+            await self._write(cfg, False, value, dev_off)
+            self._applied[zone_id] = {"value": value, "off": False, "at": dt_util.now()}
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("Could not restore heating for %s", zone_id)
+
     async def _apply(self, zone_id: str, plan: Plan) -> None:
         st = self.zone_state(zone_id)
         if not st.get("auto", True) or not plan.hours:
             return
-        cfg = next(z for z in self.zone_configs if z[CONF_ZONE_ID] == zone_id)
-        now_hour = plan.hours[0]
-        target = now_hour.target
+        cfg = self._cfg(zone_id)
+        available, dev_off, current, step = self._device(cfg)
+        if not available:
+            return
+        now = dt_util.now()
         last = self._applied.get(zone_id)
+        paused = self.manual_until(zone_id)
 
-        current = self._current_value(cfg)
-        # Detect manual changes: the device differs from what we last applied.
-        if (
-            last
-            and current is not None
-            and last.get("value") is not None
-            and abs(current - last["value"]) > 0.25
-            and dt_util.now() - last["at"] > MANUAL_GRACE
-            and not self.manual_until(zone_id)
-        ):
-            nxt = next(
-                (h.start for h in plan.hours[1:] if h.scheduled != now_hour.scheduled),
-                dt_util.now() + timedelta(hours=3),
+        # Someone changed the device by hand (setpoint, or on/off) -> step back.
+        if last and not paused and now - last["at"] > MANUAL_GRACE:
+            changed = dev_off != bool(last.get("off")) or (
+                not dev_off
+                and current is not None
+                and last.get("value") is not None
+                and abs(current - last["value"]) > step / 2 + 0.01
             )
-            st["manual_until"] = nxt.isoformat()
-            await self._save()
-            _LOGGER.info("Manual change on %s, pausing until %s", zone_id, nxt)
-        if self.manual_until(zone_id):
+            if changed:
+                now_sched = plan.hours[0].scheduled
+                nxt = next(
+                    (h.start for h in plan.hours[1:] if h.scheduled != now_sched),
+                    now + timedelta(hours=3),
+                )
+                paused = nxt
+                st["manual_until"] = nxt.isoformat()
+                await self._save()
+                _LOGGER.info("Manual change on %s, pausing until %s", zone_id, nxt)
+        if paused:
+            # follow the device so the pause ends cleanly when it expires
+            self._applied[zone_id] = {
+                "value": current, "off": dev_off, "at": last["at"] if last else now
+            }
             return
 
-        try:
-            if cfg.get(CONF_MODE) == MODE_PERCENT:
-                number = cfg.get(CONF_NUMBER)
-                if number and target is not None and current != target:
-                    await self.hass.services.async_call(
-                        "number", "set_value", {"entity_id": number, "value": target},
-                        blocking=True,
-                    )
-                elif number and target is None and current != 0:
-                    await self.hass.services.async_call(
-                        "number", "set_value", {"entity_id": number, "value": 0},
-                        blocking=True,
-                    )
-                self._applied[zone_id] = {
-                    "value": 0 if target is None else target, "at": dt_util.now()
-                }
-                return
+        zone = self.zone(zone_id)
+        hour = plan.hours[0]
+        off = hour.target is None or (zone.is_percent and hour.target <= 0)
+        value = None if hour.target is None else self._round(hour.target, step)
 
-            climate = cfg.get(CONF_CLIMATE)
-            st_climate = self.hass.states.get(climate) if climate else None
-            if st_climate is None or st_climate.state == STATE_UNAVAILABLE:
-                return
-            room = self.room_temperature(zone_id)
-            zone = self.zone(zone_id)
-            if target is None:
-                if room is not None and room < zone.safety_min_temp:
-                    target = zone.safety_min_temp
-                elif st_climate.state != "off":
-                    await self.hass.services.async_call(
-                        "climate", "set_hvac_mode",
-                        {"entity_id": climate, "hvac_mode": "off"}, blocking=True,
-                    )
-                    self._applied[zone_id] = {"value": None, "at": dt_util.now(), "off": True}
-                    return
-                else:
-                    return
-            if st_climate.state == "off":
-                await self.hass.services.async_call(
-                    "climate", "set_hvac_mode",
-                    {"entity_id": climate, "hvac_mode": "heat"}, blocking=True,
-                )
-            if current is None or abs(current - target) > 0.05:
-                await self.hass.services.async_call(
-                    "climate", "set_temperature",
-                    {"entity_id": climate, "temperature": target}, blocking=True,
-                )
-            self._applied[zone_id] = {"value": target, "at": dt_util.now()}
+        # Safety floor with hysteresis (needs a room temperature).
+        room = self.room_temperature(zone_id)
+        hold = self._safety.get(zone_id, False)
+        if room is not None:
+            if room < zone.safety_min_temp:
+                hold = True
+            elif room >= zone.safety_min_temp + 0.5:
+                hold = False
+        self._safety[zone_id] = hold
+        if off and hold:
+            off = False
+            value = self._round(hour.scheduled, step)
+
+        needs = (
+            (off and not dev_off)
+            or (not off and dev_off)
+            or (not off and (current is None or abs(current - (value or 0)) > step / 2 + 0.01))
+        )
+        if zone.is_percent:
+            # for percent entities "off" is simply 0
+            needs = current is None or abs(current - (0 if off else value or 0)) > step / 2 + 0.01
+        try:
+            if needs:
+                await self._write(cfg, off, value, dev_off)
+            self._applied[zone_id] = {
+                "value": None if off and not zone.is_percent else (0 if off else value),
+                "off": off,
+                "at": now if needs or not last else last["at"],
+            }
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Could not apply plan for %s", zone_id)
-
-    def _current_value(self, cfg: dict[str, Any]) -> float | None:
-        if cfg.get(CONF_MODE) == MODE_PERCENT:
-            st = self.hass.states.get(cfg.get(CONF_NUMBER) or "")
-            return _float(st.state) if st else None
-        st = self.hass.states.get(cfg.get(CONF_CLIMATE) or "")
-        if st is None:
-            return None
-        if st.state == "off":
-            return None
-        return _float(st.attributes.get("temperature"))
 
     # ------------------------------------------------------------------ editing API
 
@@ -454,6 +516,9 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if "auto" in settings:
                 st["auto"] = bool(settings["auto"])
                 st.pop("manual_until", None)
+                if not st["auto"]:
+                    await self._restore(zone_id)
+                self._applied.pop(zone_id, None)
         await self._save()
         await self.async_request_refresh()
 
@@ -493,7 +558,9 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             except Exception as err:  # noqa: BLE001
                 _LOGGER.debug("History unavailable for %s: %s", zid, err)
                 continue
-            samples = _samples_from_history(hist, climate, sensor, weather, start, end)
+            samples = await self.hass.async_add_executor_job(
+                _samples_from_history, hist, climate, sensor, weather, start, end
+            )
             prior = self.zone(zid).thermal
             model = fit_thermal(samples, prior)
             self.zone_state(zid)["thermal"] = asdict(model)
@@ -575,14 +642,6 @@ def _samples_from_history(
                 out.append((st.last_updated, val))
         return out
 
-    def at(series_: list[tuple[datetime, Any]], t: datetime) -> Any:
-        val = None
-        for when, v in series_:
-            if when > t:
-                break
-            val = v
-        return val
-
     room_s = series(sensor, lambda s: _float(s.state)) if sensor else []
     if not room_s:
         room_s = series(
@@ -593,12 +652,23 @@ def _samples_from_history(
         )
     heat_s = series(climate, lambda s: s.attributes.get("hvac_action") == "heating")
     out_s = series(weather, lambda s: _float(s.attributes.get("temperature")))
+    class Cursor:
+        """Walks a time-sorted series forward; O(n) over the whole grid."""
+
+        def __init__(self, data: list[tuple[datetime, Any]]) -> None:
+            self.data = sorted(data, key=lambda x: x[0])
+            self.i = -1
+
+        def at(self, t: datetime) -> Any:
+            while self.i + 1 < len(self.data) and self.data[self.i + 1][0] <= t:
+                self.i += 1
+            return self.data[self.i][1] if self.i >= 0 else None
+
+    rc, hc, oc = Cursor(room_s), Cursor(heat_s), Cursor(out_s)
     samples: list[Sample] = []
     t = start
     while t <= end:
-        room = at(room_s, t)
-        heating = at(heat_s, t)
-        outdoor = at(out_s, t)
+        room, heating, outdoor = rc.at(t), hc.at(t), oc.at(t)
         if room is not None and heating is not None:
             samples.append(Sample(t, room, outdoor if outdoor is not None else 5.0, bool(heating)))
         t += timedelta(minutes=30)

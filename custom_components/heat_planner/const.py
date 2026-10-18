@@ -54,6 +54,7 @@ TUNABLE_ZONE: Final = (
     "safety_min_temp",
     "heater_kw",
     "price_aggressiveness",
+    "max_off_hours",
 )
 TUNABLE_RULES: Final = (
     "enabled",
@@ -72,3 +73,5 @@ SCOPE_DAYS: Final = "days"
 
 ATTR_ENTRY_ID: Final = "entry_id"
 ATTR_ZONE: Final = "zone"
+
+SIGNAL_ENTRIES_CHANGED: Final = f"{DOMAIN}_entries_changed"

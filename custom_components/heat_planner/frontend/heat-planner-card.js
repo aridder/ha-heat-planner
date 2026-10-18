@@ -251,8 +251,23 @@ class HeatPlannerCard extends HTMLElement {
     const cur = this.entry?.currency || "";
     return `${new Intl.NumberFormat(this.locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(v)} ${cur}/kWh`.trim();
   }
-  hh(d) { return String(new Date(d).getHours()).padStart(2, "0"); }
-  dateKey(d) { const x = new Date(d); return `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, "0")}-${String(x.getDate()).padStart(2, "0")}`; }
+  get tz() { return this._hass?.config?.time_zone || undefined; }
+  // Server timestamps are ISO strings in HA's own time zone: read date/hour from the text.
+  hh(d) {
+    if (typeof d === "string" && d.length >= 13 && d[10] === "T") return d.slice(11, 13);
+    const h = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hourCycle: "h23", timeZone: this.tz }).format(new Date(d));
+    return h.padStart(2, "0");
+  }
+  dateKey(d) {
+    if (typeof d === "string" && /^\d{4}-\d{2}-\d{2}/.test(d)) return d.slice(0, 10);
+    return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: this.tz }).format(new Date(d));
+  }
+  nowKey() { return { date: this.dateKey(new Date()), hour: +this.hh(new Date()), frac: new Date().getMinutes() / 60 }; }
+  weekdayShort(dateKey) {
+    const [y, m, d] = dateKey.split("-").map(Number);
+    return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(this.locale, { weekday: "short", timeZone: "UTC" });
+  }
+  esc(v) { return String(v).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]); }
   weekday(dateKey) { const [y, m, d] = dateKey.split("-").map(Number); return (new Date(y, m - 1, d).getDay() + 6) % 7; }
   dayValues(z, dateKey) {
     if (z.overrides?.[dateKey]) return [...z.overrides[dateKey]];
@@ -267,7 +282,7 @@ class HeatPlannerCard extends HTMLElement {
     const hours = z.plan?.hours || [];
     const h0 = hours[0];
     const parts = [];
-    parts.push(z.room_temperature != null ? t.is(z.name, `<span class="temp">${this.fmtT(z.room_temperature, { mode: "setpoint" })}</span>`) : t.noTemp(z.name));
+    parts.push(z.room_temperature != null ? t.is(this.esc(z.name), `<span class="temp">${this.fmtT(z.room_temperature, { mode: "setpoint" })}</span>`) : t.noTemp(this.esc(z.name)));
     let nowTxt;
     if (!z.auto) nowTxt = t.now.disabled() + t.dot;
     else if (z.manual_until) nowTxt = t.now.manual(this.hh(z.manual_until)) + t.dot;
@@ -361,20 +376,18 @@ class HeatPlannerCard extends HTMLElement {
     // Returns [{start: Date, target, scheduled, predicted, price, level, mode, reasons, editIdx}]
     if (!this._edit) {
       const hrs = (z.plan?.hours || []).slice(0, this._config.hours);
-      return hrs.map((h) => ({ ...h, start: new Date(h.start) }));
+      return hrs.map((h) => ({ ...h, key: this.dateKey(h.start), hour: +this.hh(h.start) }));
     }
     const { date, values } = this._edit;
     const plan = this._edit.preview || z.plan;
     const byKey = new Map((plan?.hours || []).map((h) => [this.dateKey(h.start) + "T" + this.hh(h.start), h]));
     const prices = new Map((this.entry?.prices || []).map((p) => [this.dateKey(p.start) + "T" + this.hh(p.start), p]));
-    const [y, m, d] = date.split("-").map(Number);
     return values.map((v, i) => {
-      const start = new Date(y, m - 1, d, i);
       const key = date + "T" + String(i).padStart(2, "0");
       const h = byKey.get(key);
       const p = prices.get(key);
       return {
-        start, editIdx: i, scheduled: this.abs(z, v),
+        key: date, hour: i, editIdx: i, scheduled: this.abs(z, v),
         target: h ? h.target : this.abs(z, v), predicted: h?.predicted ?? null,
         price: h?.price ?? p?.price ?? null, level: h?.level ?? p?.level ?? "normal",
         mode: h?.mode ?? "normal", reasons: h?.reasons ?? ["schedule"], cost: h?.cost ?? null,
@@ -402,6 +415,7 @@ class HeatPlannerCard extends HTMLElement {
       lo = Math.floor(Math.min(...vals) - 1); hi = Math.ceil(Math.max(...vals) + 1);
       if (hi - lo < 6) { const c = (hi + lo) / 2; lo = Math.floor(c - 3); hi = Math.ceil(c + 3); }
     }
+    if (this._drag && this._frozen) ({ lo, hi } = this._frozen);
     const Y = (v) => m.t + ch - ((v - lo) / (hi - lo)) * ch;
     this._geo = { X, Y, bw, lo, hi, m, ch, n, W, percent };
 
@@ -462,20 +476,20 @@ class HeatPlannerCard extends HTMLElement {
     // x axis labels + day separators
     const every = n > 30 ? 3 : n > 16 ? 2 : 1;
     series.forEach((s, i) => {
-      const hr = s.start.getHours();
+      const hr = s.hour;
       if (hr === 0 && i > 0) {
         svg.append(el("line", { x1: X(i), x2: X(i), y1: m.t, y2: H - m.b, stroke: "var(--hp-line)" }));
-        axis.append(el("text", { x: X(i) + 3, y: m.t + 10, text: s.start.toLocaleDateString(this.locale, { weekday: "short" }) }));
+        axis.append(el("text", { x: X(i) + 3, y: m.t + 10, text: this.weekdayShort(s.key) }));
       }
       if (hr % every === 0) axis.append(el("text", { x: X(i) + bw / 2, y: H - 5, "text-anchor": "middle", text: String(hr).padStart(2, "0") }));
     });
     svg.append(axis);
 
     // now marker
-    const nowFrac = this._nowFrac(series);
-    if (nowFrac !== null) {
-      const idx = series.findIndex((s) => s.start.getTime() <= Date.now() && Date.now() < s.start.getTime() + 3600e3);
-      const x = X(idx) + bw * nowFrac;
+    const nk = this.nowKey();
+    const idx = series.findIndex((s) => s.key === nk.date && s.hour === nk.hour);
+    if (idx >= 0) {
+      const x = X(idx) + bw * nk.frac;
       svg.append(el("g", { class: "now" }, el("line", { x1: x, x2: x, y1: m.t, y2: H - m.b }),
         el("text", { x: x + 4, y: m.t + 9, text: this.t.nowLabel })));
     }
@@ -530,18 +544,18 @@ class HeatPlannerCard extends HTMLElement {
         ev.preventDefault();
         wrap.setPointerCapture(ev.pointerId);
         this._drag = true; this._hideTip();
+        this._frozen = { lo: this._geo.lo, hi: this._geo.hi };
         this._paint(wrap, z, idxAt(ev), valAt(ev));
       });
-      const end = () => { if (this._drag) { this._drag = false; this._render(); this._preview(z); } };
+      const end = () => { if (this._drag) { this._drag = false; this._frozen = null; this._render(); this._preview(z); } };
       wrap.addEventListener("pointerup", end);
       wrap.addEventListener("pointercancel", end);
     }
   }
 
   _nowFrac(series) {
-    const now = Date.now();
-    const s = series.find((x) => x.start.getTime() <= now && now < x.start.getTime() + 3600e3);
-    return s ? (now - s.start.getTime()) / 3600e3 : null;
+    const nk = this.nowKey();
+    return series.some((s) => s.key === nk.date && s.hour === nk.hour) ? nk.frac : null;
   }
 
   _showTip(wrap, s, z, frac) {
@@ -549,7 +563,7 @@ class HeatPlannerCard extends HTMLElement {
     this._hideTip();
     const extra = this.entry?.price_extra || 0;
     const tip = el("div", { class: "tip" },
-      el("div", {}, el("b", { text: `${String(s.start.getHours()).padStart(2, "0")}:00` }), "  ",
+      el("div", {}, el("b", { text: `${String(s.hour).padStart(2, "0")}:00` }), "  ",
         s.target === null ? t.modes.off : `${t.target} `, s.target === null ? null : el("b", { text: this.fmtT(s.target, z) })),
       s.predicted != null ? el("div", {}, `${t.predicted}: `, el("b", { text: this.fmtT(s.predicted, { mode: "setpoint" }) })) : null,
       s.price != null ? el("div", {}, `${t.price}: `, el("b", { text: this.fmtPrice(s.price + extra) }), ` (${t.levels[s.level] || s.level})`) : null,

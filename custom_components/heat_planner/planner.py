@@ -93,6 +93,7 @@ class ZoneConfig:
     safety_min_temp: float = 18.0  # never cut off when the room is colder than this
     heater_kw: float = 1.0
     price_aggressiveness: float = 1.0  # 0 = ignore prices, 1 = normal, 2 = aggressive
+    max_off_hours: int = 2  # never cut off more than this many hours in a row
     thermal: ThermalModel = field(default_factory=ThermalModel)
 
     @property
@@ -262,7 +263,8 @@ def build_plan(
         sched, is_override = scheduled_value(zone, schedule, overrides, t)
         reasons = [R_OVERRIDE if is_override else R_SCHEDULE]
         target = sched
-        protected = zone.protected_from_hour <= t.hour < zone.protected_to_hour
+        pf, pt = zone.protected_from_hour, zone.protected_to_hour
+        protected = (pf <= t.hour < pt) if pf <= pt else (t.hour >= pf or t.hour < pt)
 
         # Away: only until the expected warm-up hour of that day.
         if away_active and t.hour >= zone.away_until_hour:
@@ -333,6 +335,7 @@ def build_plan(
             )
         )
 
+    _cap_off_runs(zone, slots)
     _simulate(zone, slots, room_temp, outdoor or {}, outdoor_default)
 
     # Baseline: same schedule, no price logic, nobody away.
@@ -359,6 +362,21 @@ def build_plan(
     cost, kwh = total(slots)
     bcost, bkwh = total(base_slots)
     return Plan(zone.zone_id, slots, cost, bcost, round(kwh, 3), round(bkwh, 3))
+
+
+def _cap_off_runs(zone: ZoneConfig, slots: list[PlanHour]) -> None:
+    """Never leave heating off for more than ``max_off_hours`` in a row."""
+    run = 0
+    for s in slots:
+        if s.target is None:
+            run += 1
+            if run > zone.max_off_hours:
+                t = _clamp(s.scheduled - zone.price_shift, zone.min_value, zone.max_value)
+                s.target = round(t) if zone.is_percent else round(t * 2) / 2
+                s.mode = "save"
+                s.reasons = [r for r in s.reasons if r != R_EXTREME_OFF] + [R_EXPENSIVE]
+        else:
+            run = 0
 
 
 def _simulate(

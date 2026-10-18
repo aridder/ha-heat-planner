@@ -10,7 +10,7 @@ from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN, SCOPE_ALL, SCOPE_DATE, SCOPE_DAYS, SCOPE_WEEKDAYS, SCOPE_WEEKEND
+from .const import DOMAIN, SIGNAL_ENTRIES_CHANGED, SCOPE_ALL, SCOPE_DATE, SCOPE_DAYS, SCOPE_WEEKDAYS, SCOPE_WEEKEND
 
 
 def _coordinators(hass: HomeAssistant):
@@ -45,8 +45,10 @@ def ws_get(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg:
 def ws_subscribe(
     hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
 ) -> None:
-    """Push a fresh export whenever any coordinator updates."""
-    unsubs = []
+    """Push a fresh export whenever any coordinator updates (survives reloads)."""
+    from homeassistant.helpers.dispatcher import async_dispatcher_connect
+
+    listeners: list = []
 
     @callback
     def push() -> None:
@@ -56,12 +58,26 @@ def ws_subscribe(
             )
         )
 
-    for coord in _coordinators(hass):
-        unsubs.append(coord.async_add_listener(push))
+    @callback
+    def attach() -> None:
+        for u in listeners:
+            u()
+        listeners.clear()
+        for coord in _coordinators(hass):
+            listeners.append(coord.async_add_listener(push))
+
+    @callback
+    def entries_changed() -> None:
+        attach()
+        push()
+
+    unsub_signal = async_dispatcher_connect(hass, SIGNAL_ENTRIES_CHANGED, entries_changed)
+    attach()
 
     @callback
     def unsub_all() -> None:
-        for u in unsubs:
+        unsub_signal()
+        for u in listeners:
             u()
 
     connection.subscriptions[msg["id"]] = unsub_all
@@ -103,6 +119,7 @@ def ws_preview(
     connection.send_result(msg["id"], plan.as_dict())
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/save",
@@ -132,6 +149,9 @@ async def ws_save(
     zone_id = msg["zone_id"]
     if msg["scope"] == SCOPE_DATE:
         day = msg.get("date") or dt_util.now().date().isoformat()
+        if dt_util.parse_date(day) is None:
+            connection.send_error(msg["id"], "invalid", "date must be YYYY-MM-DD")
+            return
         await coord.async_set_override(zone_id, day, msg.get("values"))
     else:
         if msg.get("values") is None:
@@ -143,6 +163,7 @@ async def ws_save(
     connection.send_result(msg["id"], coord.export())
 
 
+@websocket_api.require_admin
 @websocket_api.websocket_command(
     {
         vol.Required("type"): f"{DOMAIN}/settings",
@@ -173,8 +194,19 @@ async def ws_settings(
                 clean[k] = float(v)
             except (TypeError, ValueError):
                 continue
+    limits = {
+        "away_until_hour": (0, 24), "protected_from_hour": (0, 24), "protected_to_hour": (0, 24),
+        "expensive_hours": (0, 12), "lookahead_hours": (1, 12), "max_off_hours": (0, 24),
+        "comfort": (5, 30), "min_value": (0, 100), "max_value": (0, 100),
+        "away_offset": (-80, 0), "price_shift": (0, 60), "preheat": (0, 40),
+        "safety_min_temp": (5, 25), "heater_kw": (0.01, 50), "price_aggressiveness": (0, 2),
+        "extreme_ratio": (1, 10), "extreme_min_price": (0, 100), "extreme_abs_price": (0, 100),
+    }
+    for k, (lo, hi) in limits.items():
+        if isinstance(clean.get(k), (int, float)) and not isinstance(clean.get(k), bool):
+            clean[k] = max(lo, min(hi, clean[k]))
     for k in ("away_until_hour", "protected_from_hour", "protected_to_hour",
-              "expensive_hours", "lookahead_hours"):
+              "expensive_hours", "lookahead_hours", "max_off_hours"):
         if k in clean and clean[k] is not None:
             clean[k] = int(clean[k])
     await coord.async_set_settings(zone_id, clean)
