@@ -57,6 +57,9 @@ class PriceRules:
     extreme_min_price: float = 2.0  # ... and at least this (per kWh)
     extreme_abs_price: float = 3.0  # or at least this, regardless of the average
     lookahead_hours: int = 3  # how far ahead pre-heating looks
+    # A day whose max - min price is below this (per kWh) has nothing worth
+    # shifting (e.g. Norgespris): every hour of that day is "normal".
+    min_spread: float = 0.15
 
 
 @dataclass
@@ -150,7 +153,7 @@ def classify_prices(
     for h, p in hours.items():
         day = sorted(by_day[h.date()])
         n = len(day)
-        if not rules.enabled or n < 8:
+        if not rules.enabled or n < 8 or day[-1] - day[0] < rules.min_spread:
             levels[h] = LEVEL_NORMAL
             continue
         avg = sum(day) / n
