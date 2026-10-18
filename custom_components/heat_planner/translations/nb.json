@@ -1,0 +1,301 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heat Planner",
+        "description": "Planlegg oppvarmingen etter strømpris og hvem som er hjemme.",
+        "data": {
+          "name": "Navn",
+          "price_type": "Prisskilde",
+          "presence_entities": "Tilstedeværelse (personer/sporere)",
+          "weather_entity": "Vær (prognose for utetemperatur)",
+          "price_extra": "Fast kostnad per kWh (nettleie o.l.)"
+        },
+        "data_description": {
+          "presence_entities": "Når ingen av disse er hjemme, senkes sonene fram til oppvarmingstidspunktet.",
+          "price_extra": "Brukes bare i kostnadsestimater. Planleggingen bruker spotpris."
+        }
+      },
+      "nordpool": {
+        "title": "Nord Pool",
+        "data": {
+          "nordpool_entry": "Nord Pool",
+          "nordpool_area": "Prisområde"
+        }
+      },
+      "price_sensor": {
+        "title": "Prissensor",
+        "data": {
+          "price_sensor": "Prissensor"
+        },
+        "data_description": {
+          "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
+        }
+      }
+    },
+    "abort": {
+      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp. Legg den til først, eller velg en prissensor."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heat Planner",
+        "menu_options": {
+          "add_zone": "Legg til sone",
+          "edit_zone": "Endre sone",
+          "remove_zone": "Fjern sone",
+          "general": "Pris og tilstedeværelse"
+        }
+      },
+      "add_zone": {
+        "title": "Legg til sone",
+        "description": "Komfort, tidsplaner og prisoppførsel finjusterer du senere i Heat Planner-kortet.",
+        "data": {
+          "name": "Navn",
+          "mode": "Styringstype",
+          "climate_entity": "Termostat",
+          "number_entity": "Entitet for varmebehov (%)",
+          "temperature_sensor": "Romtemperatursensor (valgfri)",
+          "comfort": "Komforttemperatur",
+          "heater_kw": "Effekt på varmeelement"
+        },
+        "data_description": {
+          "mode": "Velg prosent for termostater uten gulv-/romføler (regulatormodus).",
+          "heater_kw": "Brukes til å anslå energi og kostnad."
+        }
+      },
+      "zone": {
+        "title": "Endre sone",
+        "data": {
+          "name": "Navn",
+          "mode": "Styringstype",
+          "climate_entity": "Termostat",
+          "number_entity": "Entitet for varmebehov (%)",
+          "temperature_sensor": "Romtemperatursensor (valgfri)",
+          "comfort": "Komforttemperatur",
+          "heater_kw": "Effekt på varmeelement"
+        },
+        "data_description": {
+          "mode": "Velg prosent for termostater uten gulv-/romføler (regulatormodus).",
+          "heater_kw": "Brukes til å anslå energi og kostnad."
+        }
+      },
+      "edit_zone": {
+        "title": "Endre sone",
+        "data": {
+          "zone_id": "Sone"
+        }
+      },
+      "remove_zone": {
+        "title": "Fjern sone",
+        "data": {
+          "zone_id": "Sone"
+        }
+      },
+      "general": {
+        "title": "Pris og tilstedeværelse",
+        "data": {
+          "price_type": "Prisskilde",
+          "presence_entities": "Tilstedeværelse (personer/sporere)",
+          "weather_entity": "Vær (prognose for utetemperatur)",
+          "price_extra": "Fast kostnad per kWh (nettleie o.l.)"
+        },
+        "data_description": {
+          "presence_entities": "Når ingen av disse er hjemme, senkes sonene fram til oppvarmingstidspunktet.",
+          "price_extra": "Brukes bare i kostnadsestimater. Planleggingen bruker spotpris."
+        }
+      },
+      "nordpool": {
+        "title": "Nord Pool",
+        "data": {
+          "nordpool_entry": "Nord Pool",
+          "nordpool_area": "Prisområde"
+        }
+      },
+      "price_sensor": {
+        "title": "Prissensor",
+        "data": {
+          "price_sensor": "Prissensor"
+        },
+        "data_description": {
+          "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
+        }
+      }
+    },
+    "error": {
+      "climate_required": "Velg en termostat for styring med temperatur.",
+      "number_required": "Velg en prosent-entitet for styring med prosent.",
+      "duplicate": "Det finnes allerede en sone med dette navnet."
+    },
+    "abort": {
+      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp."
+    }
+  },
+  "selector": {
+    "price_type": {
+      "options": {
+        "nordpool": "Nord Pool",
+        "sensor": "Prissensor"
+      }
+    },
+    "mode": {
+      "options": {
+        "setpoint": "Temperatur (termostat)",
+        "percent": "Prosent (regulatormodus)"
+      }
+    },
+    "scope": {
+      "options": {
+        "all": "Alle dager",
+        "weekdays": "Hverdager",
+        "weekend": "Helg",
+        "days": "Valgte dager",
+        "date": "Én dato"
+      }
+    },
+    "weekday": {
+      "options": {
+        "0": "Mandag",
+        "1": "Tirsdag",
+        "2": "Onsdag",
+        "3": "Torsdag",
+        "4": "Fredag",
+        "5": "Lørdag",
+        "6": "Søndag"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "target": {
+        "name": "Mål"
+      },
+      "mode": {
+        "name": "Modus",
+        "state": {
+          "comfort": "Komfort",
+          "setback": "Senket",
+          "preheat": "Forvarmer",
+          "save": "Sparer",
+          "off": "Av (pristopp)",
+          "away": "Borte",
+          "normal": "Normal",
+          "manual": "Manuell",
+          "disabled": "Deaktivert"
+        }
+      },
+      "predicted": {
+        "name": "Forventet temperatur"
+      },
+      "cost_24h": {
+        "name": "Estimert kostnad neste 24 t"
+      },
+      "savings_24h": {
+        "name": "Estimert besparelse neste 24 t"
+      },
+      "price_level": {
+        "name": "Prisnivå",
+        "state": {
+          "cheap": "Billig",
+          "normal": "Normal",
+          "expensive": "Dyr",
+          "extreme": "Ekstrem"
+        }
+      }
+    },
+    "switch": {
+      "auto": {
+        "name": "Automatisk styring"
+      }
+    },
+    "number": {
+      "comfort": {
+        "name": "Komforttemperatur"
+      }
+    },
+    "select": {
+      "strategy": {
+        "name": "Prisstrategi",
+        "state": {
+          "off": "Ignorer pris",
+          "gentle": "Forsiktig",
+          "balanced": "Balansert",
+          "aggressive": "Aggressiv"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_zone": {
+      "message": "Ukjent Heat Planner-sone: {zone}"
+    },
+    "date_required": {
+      "message": "Dato må oppgis når omfanget er én dato."
+    }
+  },
+  "services": {
+    "set_schedule": {
+      "name": "Sett tidsplan",
+      "description": "Sett 24 timesverdier for en sone (avvik i °C for termostater, prosent for prosentsoner).",
+      "fields": {
+        "zone": {
+          "name": "Sone",
+          "description": "Sone-id"
+        },
+        "values": {
+          "name": "Verdier",
+          "description": "24 verdier, én per time"
+        },
+        "scope": {
+          "name": "Gjelder for",
+          "description": "Hvilke dager"
+        },
+        "days": {
+          "name": "Dager",
+          "description": "Brukes med «Valgte dager»"
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Brukes med «Én dato»"
+        },
+        "entry_id": {
+          "name": "Hjem",
+          "description": "Trengs bare med flere hjem"
+        }
+      }
+    },
+    "clear_override": {
+      "name": "Fjern endring for én dag",
+      "description": "Gå tilbake til fast tidsplan for en dato.",
+      "fields": {
+        "zone": {
+          "name": "Sone",
+          "description": "Sone-id"
+        },
+        "date": {
+          "name": "Dato",
+          "description": "Standard er i dag"
+        },
+        "entry_id": {
+          "name": "Hjem",
+          "description": "Trengs bare med flere hjem"
+        }
+      }
+    },
+    "resume": {
+      "name": "Gjenoppta automatisk styring",
+      "description": "Avslutt manuell pause og bruk planen nå.",
+      "fields": {
+        "zone": {
+          "name": "Sone",
+          "description": "Sone-id"
+        },
+        "entry_id": {
+          "name": "Hjem",
+          "description": "Trengs bare med flere hjem"
+        }
+      }
+    }
+  }
+}

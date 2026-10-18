@@ -1,0 +1,20 @@
+{
+  "entity": {
+    "sensor": {
+      "target": {"default": "mdi:thermostat"},
+      "mode": {"default": "mdi:calendar-clock", "state": {"preheat": "mdi:heat-wave", "save": "mdi:piggy-bank-outline", "off": "mdi:power-plug-off-outline", "away": "mdi:home-export-outline", "setback": "mdi:weather-night", "comfort": "mdi:sofa-outline", "manual": "mdi:hand-back-right-outline", "disabled": "mdi:pause-circle-outline"}},
+      "predicted": {"default": "mdi:chart-bell-curve-cumulative"},
+      "cost_24h": {"default": "mdi:cash"},
+      "savings_24h": {"default": "mdi:piggy-bank"},
+      "price_level": {"default": "mdi:flash", "state": {"cheap": "mdi:flash-outline", "expensive": "mdi:flash-alert", "extreme": "mdi:flash-alert-outline"}}
+    },
+    "switch": {"auto": {"default": "mdi:robot-outline"}},
+    "number": {"comfort": {"default": "mdi:sofa-outline"}},
+    "select": {"strategy": {"default": "mdi:tune-variant"}}
+  },
+  "services": {
+    "set_schedule": {"service": "mdi:calendar-edit"},
+    "clear_override": {"service": "mdi:calendar-remove"},
+    "resume": {"service": "mdi:play-circle-outline"}
+  }
+}

@@ -1,0 +1,54 @@
+set_schedule:
+  fields:
+    zone:
+      required: true
+      example: stue
+      selector:
+        text:
+    values:
+      required: true
+      example: "[-2,-2,0,0,0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-2]"
+      selector:
+        object:
+    scope:
+      default: all
+      selector:
+        select:
+          translation_key: scope
+          options: [all, weekdays, weekend, days, date]
+    days:
+      selector:
+        select:
+          multiple: true
+          translation_key: weekday
+          options: ["0", "1", "2", "3", "4", "5", "6"]
+    date:
+      selector:
+        date:
+    entry_id:
+      selector:
+        config_entry:
+          integration: heat_planner
+clear_override:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    date:
+      selector:
+        date:
+    entry_id:
+      selector:
+        config_entry:
+          integration: heat_planner
+resume:
+  fields:
+    zone:
+      required: true
+      selector:
+        text:
+    entry_id:
+      selector:
+        config_entry:
+          integration: heat_planner

@@ -1,0 +1,14 @@
+{
+  "domain": "heat_planner",
+  "name": "Heat Planner",
+  "after_dependencies": ["nordpool", "recorder", "weather"],
+  "codeowners": ["@aridder"],
+  "config_flow": true,
+  "dependencies": ["frontend", "http", "websocket_api"],
+  "documentation": "https://github.com/aridder/ha-heat-planner",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/aridder/ha-heat-planner/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}

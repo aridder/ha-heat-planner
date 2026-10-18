@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set version
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          python3 - "$VERSION" <<'PY'
+          import json, re, sys, pathlib
+          v = sys.argv[1]
+          m = pathlib.Path("custom_components/heat_planner/manifest.json")
+          d = json.loads(m.read_text()); d["version"] = v; m.write_text(json.dumps(d, indent=2) + "\n")
+          for p in ["custom_components/heat_planner/const.py"]:
+              f = pathlib.Path(p); f.write_text(re.sub(r'VERSION: Final = "[^"]+"', f'VERSION: Final = "{v}"', f.read_text()))
+          f = pathlib.Path("custom_components/heat_planner/frontend/heat-planner-card.js")
+          f.write_text(re.sub(r'const VERSION = "[^"]+"', f'const VERSION = "{v}"', f.read_text()))
+          PY
+      - name: Zip
+        run: cd custom_components/heat_planner && zip -r ../../heat_planner.zip .
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: heat_planner.zip

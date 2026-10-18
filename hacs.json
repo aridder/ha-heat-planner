@@ -1,0 +1,6 @@
+{
+  "name": "Heat Planner",
+  "render_readme": true,
+  "homeassistant": "2025.6.0",
+  "country": ["NO", "SE", "DK", "FI", "DE", "NL", "BE", "AT", "FR", "EE", "LV", "LT", "PL"]
+}

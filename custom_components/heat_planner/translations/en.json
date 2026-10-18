@@ -1,0 +1,301 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Heat Planner",
+        "description": "Plan heating around electricity prices and presence.",
+        "data": {
+          "name": "Name",
+          "price_type": "Price source",
+          "presence_entities": "Presence (people/trackers)",
+          "weather_entity": "Weather (outdoor temperature forecast)",
+          "price_extra": "Fixed cost per kWh (grid tariff etc.)"
+        },
+        "data_description": {
+          "presence_entities": "When none of these are home, zones are lowered until the warm-up hour.",
+          "price_extra": "Only used for cost estimates. Planning uses spot prices."
+        }
+      },
+      "nordpool": {
+        "title": "Nord Pool",
+        "data": {
+          "nordpool_entry": "Nord Pool",
+          "nordpool_area": "Price area"
+        }
+      },
+      "price_sensor": {
+        "title": "Price sensor",
+        "data": {
+          "price_sensor": "Price sensor"
+        },
+        "data_description": {
+          "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
+        }
+      }
+    },
+    "abort": {
+      "no_nordpool": "The Nord Pool integration is not set up. Add it first or choose a price sensor."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Heat Planner",
+        "menu_options": {
+          "add_zone": "Add zone",
+          "edit_zone": "Edit zone",
+          "remove_zone": "Remove zone",
+          "general": "Price & presence"
+        }
+      },
+      "add_zone": {
+        "title": "Add zone",
+        "description": "Fine-tune comfort, schedules and price behaviour later in the Heat Planner card.",
+        "data": {
+          "name": "Name",
+          "mode": "Control type",
+          "climate_entity": "Thermostat",
+          "number_entity": "Heating demand (%) entity",
+          "temperature_sensor": "Room temperature sensor (optional)",
+          "comfort": "Comfort temperature",
+          "heater_kw": "Heater power"
+        },
+        "data_description": {
+          "mode": "Use percent for thermostats without a floor/room sensor (regulator mode).",
+          "heater_kw": "Used to estimate energy and cost."
+        }
+      },
+      "zone": {
+        "title": "Edit zone",
+        "data": {
+          "name": "Name",
+          "mode": "Control type",
+          "climate_entity": "Thermostat",
+          "number_entity": "Heating demand (%) entity",
+          "temperature_sensor": "Room temperature sensor (optional)",
+          "comfort": "Comfort temperature",
+          "heater_kw": "Heater power"
+        },
+        "data_description": {
+          "mode": "Use percent for thermostats without a floor/room sensor (regulator mode).",
+          "heater_kw": "Used to estimate energy and cost."
+        }
+      },
+      "edit_zone": {
+        "title": "Edit zone",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "remove_zone": {
+        "title": "Remove zone",
+        "data": {
+          "zone_id": "Zone"
+        }
+      },
+      "general": {
+        "title": "Price & presence",
+        "data": {
+          "price_type": "Price source",
+          "presence_entities": "Presence (people/trackers)",
+          "weather_entity": "Weather (outdoor temperature forecast)",
+          "price_extra": "Fixed cost per kWh (grid tariff etc.)"
+        },
+        "data_description": {
+          "presence_entities": "When none of these are home, zones are lowered until the warm-up hour.",
+          "price_extra": "Only used for cost estimates. Planning uses spot prices."
+        }
+      },
+      "nordpool": {
+        "title": "Nord Pool",
+        "data": {
+          "nordpool_entry": "Nord Pool",
+          "nordpool_area": "Price area"
+        }
+      },
+      "price_sensor": {
+        "title": "Price sensor",
+        "data": {
+          "price_sensor": "Price sensor"
+        },
+        "data_description": {
+          "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
+        }
+      }
+    },
+    "error": {
+      "climate_required": "Choose a thermostat for setpoint control.",
+      "number_required": "Choose a percent entity for percent control.",
+      "duplicate": "A zone with this name already exists."
+    },
+    "abort": {
+      "no_nordpool": "The Nord Pool integration is not set up."
+    }
+  },
+  "selector": {
+    "price_type": {
+      "options": {
+        "nordpool": "Nord Pool",
+        "sensor": "Price sensor"
+      }
+    },
+    "mode": {
+      "options": {
+        "setpoint": "Temperature (thermostat)",
+        "percent": "Percent (regulator mode)"
+      }
+    },
+    "scope": {
+      "options": {
+        "all": "All days",
+        "weekdays": "Weekdays",
+        "weekend": "Weekend",
+        "days": "Selected days",
+        "date": "One date"
+      }
+    },
+    "weekday": {
+      "options": {
+        "0": "Monday",
+        "1": "Tuesday",
+        "2": "Wednesday",
+        "3": "Thursday",
+        "4": "Friday",
+        "5": "Saturday",
+        "6": "Sunday"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "target": {
+        "name": "Target"
+      },
+      "mode": {
+        "name": "Mode",
+        "state": {
+          "comfort": "Comfort",
+          "setback": "Setback",
+          "preheat": "Pre-heating",
+          "save": "Saving",
+          "off": "Off (price peak)",
+          "away": "Away",
+          "normal": "Normal",
+          "manual": "Manual",
+          "disabled": "Disabled"
+        }
+      },
+      "predicted": {
+        "name": "Predicted temperature"
+      },
+      "cost_24h": {
+        "name": "Estimated cost next 24 h"
+      },
+      "savings_24h": {
+        "name": "Estimated savings next 24 h"
+      },
+      "price_level": {
+        "name": "Price level",
+        "state": {
+          "cheap": "Cheap",
+          "normal": "Normal",
+          "expensive": "Expensive",
+          "extreme": "Extreme"
+        }
+      }
+    },
+    "switch": {
+      "auto": {
+        "name": "Automatic control"
+      }
+    },
+    "number": {
+      "comfort": {
+        "name": "Comfort temperature"
+      }
+    },
+    "select": {
+      "strategy": {
+        "name": "Price strategy",
+        "state": {
+          "off": "Ignore prices",
+          "gentle": "Gentle",
+          "balanced": "Balanced",
+          "aggressive": "Aggressive"
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_zone": {
+      "message": "Unknown Heat Planner zone: {zone}"
+    },
+    "date_required": {
+      "message": "A date is required when scope is date."
+    }
+  },
+  "services": {
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Set 24 hourly values for a zone (offsets in °C for thermostats, percent for percent zones).",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "Zone id"
+        },
+        "values": {
+          "name": "Values",
+          "description": "24 values, one per hour"
+        },
+        "scope": {
+          "name": "Applies to",
+          "description": "Which days"
+        },
+        "days": {
+          "name": "Days",
+          "description": "Used with scope 'days'"
+        },
+        "date": {
+          "name": "Date",
+          "description": "Used with scope 'date'"
+        },
+        "entry_id": {
+          "name": "Home",
+          "description": "Only needed with several homes"
+        }
+      }
+    },
+    "clear_override": {
+      "name": "Clear one-day change",
+      "description": "Go back to the standing schedule for a date.",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "Zone id"
+        },
+        "date": {
+          "name": "Date",
+          "description": "Defaults to today"
+        },
+        "entry_id": {
+          "name": "Home",
+          "description": "Only needed with several homes"
+        }
+      }
+    },
+    "resume": {
+      "name": "Resume automatic control",
+      "description": "End a manual pause and apply the plan now.",
+      "fields": {
+        "zone": {
+          "name": "Zone",
+          "description": "Zone id"
+        },
+        "entry_id": {
+          "name": "Home",
+          "description": "Only needed with several homes"
+        }
+      }
+    }
+  }
+}
