@@ -19,7 +19,7 @@ const I18N = {
     nextOff: (h) => `, off from ${h}.`,
     dot: ".",
     peak: (a, b, p) => ` Next price peak ${a}–${b} (up to ${p}).`,
-    cost: (c, s) => `Next 24 h about ${c}` + (s > 0.005 ? `, ${s} less than without price control.` : "."),
+    cost: (c, s) => `Next 24 h about ${c}` + (s ? `, ${s} less than without price control.` : "."),
     target: "Target", predicted: "Expected room temperature", price: "Price",
     modes: { comfort: "Comfort", normal: "Normal", setback: "Lowered", preheat: "Pre-heat", save: "Saving", off: "Off", away: "Away" },
     levels: { cheap: "cheap", normal: "normal", expensive: "expensive", extreme: "extreme" },
@@ -41,6 +41,19 @@ const I18N = {
     protectFrom: "No price saving from", protectTo: "No price saving until", model: (g, tau, l) => `Room model: heats ${g}°/h, loses half its warmth in ${tau} h${l ? " (learned from history)" : " (from your home description)"}.`,
     power: (kw, src) => `Heater ${kw} kW${src === "measured" ? " (measured)" : src === "estimate" ? " (estimate)" : ""}.`,
     resume: "Resume plan", manualBadge: "Manual", help: "How it works", closeHelp: "Close help",
+    fbCold: "Too cold", fbWarm: "Too warm", fbLabel: "How does it feel?", fbFail: "Could not send feedback.",
+    cost24: (c, k) => `Next 24 h about ${c} · ${k} kWh.`,
+    saves: (s, p) => ` Saves ${s}${p ? ` (${p})` : ""}`,
+    kwhMore: (k) => `, uses ${k} kWh more.`, kwhLess: (k) => `, uses ${k} kWh less.`,
+    littleSaving: " Price control saves little today.",
+    deficit: (d) => ` About ${d} degree-hours below target.`,
+    step: (l) => `Capacity step ${l}`, top3: (v) => `avg top 3: ${v} kW`, capToday: (v) => `cap today ${v} kW`,
+    nextStep: (k, c) => `next step at ${k} kW` + (c ? ` (+${c}/month)` : ""), homeLoad: "Home load",
+    quality: { good: "good", fair: "fair", uncertain: "uncertain" },
+    fit: (r, q) => `Hits within ±${r}°` + (q ? ` (${q})` : "") + ".", fitQ: (q) => `Model confidence: ${q}.`,
+    solar: "Accounts for sunshine.", lag: (h) => `Floor responds after about ${h} h.`,
+    autoLbl: "Auto", autoAt: (h) => `Auto (${h})`,
+    arrival: (t) => `You usually get home around ${t}.`, arrivalLearning: "Still learning when you get home.",
   },
   nb: {
     loading: "Henter varmeplan …",
@@ -57,7 +70,7 @@ const I18N = {
     nextOff: (h) => `, av fra kl. ${h}.`,
     dot: ".",
     peak: (a, b, p) => ` Neste pristopp ${a}–${b} (opptil ${p}).`,
-    cost: (c, s) => `Neste 24 timer koster omtrent ${c}` + (s > 0.005 ? `, ${s} mindre enn uten prisstyring.` : "."),
+    cost: (c, s) => `Neste 24 timer koster omtrent ${c}` + (s ? `, ${s} mindre enn uten prisstyring.` : "."),
     target: "Mål", predicted: "Forventet romtemperatur", price: "Pris",
     modes: { comfort: "Komfort", normal: "Normal", setback: "Senket", preheat: "Forvarmer", save: "Sparer", off: "Av", away: "Borte" },
     levels: { cheap: "billig", normal: "normal", expensive: "dyr", extreme: "ekstrem" },
@@ -79,6 +92,19 @@ const I18N = {
     protectFrom: "Ingen prissparing fra kl.", protectTo: "Ingen prissparing til kl.", model: (g, tau, l) => `Rommodell: varmes ${g}°/t, mister halve varmen på ${tau} t${l ? " (lært av historikken)" : " (fra beskrivelsen av huset)"}.`,
     power: (kw, src) => `Effekt ${String(kw).replace(".", ",")} kW${src === "measured" ? " (målt)" : src === "estimate" ? " (anslått)" : ""}.`,
     resume: "Gjenoppta plan", manualBadge: "Manuell", help: "Slik fungerer det", closeHelp: "Lukk hjelpen",
+    fbCold: "For kaldt", fbWarm: "For varmt", fbLabel: "Hvordan kjennes det?", fbFail: "Kunne ikke sende tilbakemeldingen.",
+    cost24: (c, k) => `Neste 24 t ca. ${c} · ${k} kWh.`,
+    saves: (s, p) => ` Sparer ${s}${p ? ` (${p})` : ""}`,
+    kwhMore: (k) => `, bruker ${k} kWh mer.`, kwhLess: (k) => `, bruker ${k} kWh mindre.`,
+    littleSaving: " Prisstyring sparer lite i dag.",
+    deficit: (d) => ` Ca. ${d} gradtimer under målet.`,
+    step: (l) => `Effekttrinn ${l}`, top3: (v) => `snitt topp 3: ${v} kW`, capToday: (v) => `tak i dag ${v} kW`,
+    nextStep: (k, c) => `neste trinn ved ${k} kW` + (c ? ` (+${c}/mnd)` : ""), homeLoad: "Husets forbruk",
+    quality: { good: "god", fair: "middels", uncertain: "usikker" },
+    fit: (r, q) => `Treffer innenfor ±${r}°` + (q ? ` (${q})` : "") + ".", fitQ: (q) => `Modellens sikkerhet: ${q}.`,
+    solar: "Tar hensyn til sol.", lag: (h) => `Gulvet reagerer etter ca. ${h} t.`,
+    autoLbl: "Auto", autoAt: (h) => `Auto (${h})`,
+    arrival: (t) => `Dere kommer vanligvis hjem ca. ${t}.`, arrivalLearning: "Lærer fortsatt når dere kommer hjem.",
   },
 };
 
@@ -152,6 +178,20 @@ summary::before { content:"+ "; } details[open] summary::before { content:"– "
 .tog[aria-checked=true] { background:var(--hp-ink); } .tog[aria-checked=true]::after { transform:translateX(16px); }
 .model { grid-column:1 / -1; color:var(--hp-soft); font-size:12px; margin-top:4px; }
 .empty { color:var(--hp-soft); font-size:14px; padding:8px 0; }
+.fb { display:flex; gap:6px; align-items:center; flex-wrap:wrap; margin:6px 0 12px; }
+.fb .chip { font-size:12px; padding:4px 10px; }
+.fb .chip:hover:not([disabled]) { color:var(--hp-ink); border-color:var(--hp-ink); }
+.fb .chip[disabled] { opacity:.5; cursor:default; }
+.fb .chip i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; vertical-align:1px; }
+.cost.flash { color:var(--hp-ink); }
+.tariff { color:var(--hp-soft); font-size:12px; margin:6px 0 0; font-variant-numeric:tabular-nums; }
+.tariff b { color:var(--hp-ink); font-weight:500; }
+.loadrow { margin-top:2px; }
+.loadrow .kwbar { fill:var(--hp-normal); opacity:.55; }
+.loadrow .kwbar.over { fill:var(--hp-ext); opacity:.85; }
+.loadrow .cap { stroke:var(--hp-ext); stroke-width:1; stroke-dasharray:3 3; opacity:.8; }
+.loadrow text { fill:var(--hp-soft); font-size:10px; }
+.step .chip { font-size:12px; padding:3px 9px; margin-right:4px; }
 @media (prefers-reduced-motion: reduce) { .tog, .tog::after { transition:none; } }
 `;
 
@@ -317,7 +357,101 @@ class HeatPlannerCard extends HTMLElement {
     const extra = this.entry?.price_extra || 0;
     const cost = hours.reduce((a, h) => a + h.cost + h.kwh * extra, 0);
     const save = (z.plan.savings || 0) + extra * ((z.plan.baseline_kwh || 0) - (z.plan.kwh || 0));
-    return this.t.cost(this.fmtMoney(cost), save > 0.005 ? this.fmtMoney(save) : 0);
+    const p = z.plan;
+    if (typeof p.explanation === "string" && p.explanation.trim()) return p.explanation.trim();
+    if (p.extra_kwh === undefined && p.savings_pct === undefined && p.comfort_deficit === undefined)
+      return this.t.cost(this.fmtMoney(cost), save > 0.005 ? this.fmtMoney(save) : 0);
+    // Honest line: cost and energy, what price control saves – and what it costs in kWh or comfort.
+    const t = this.t;
+    const kwh = hours.reduce((a, h) => a + (h.kwh || 0), 0);
+    let txt = t.cost24(this.fmtMoney(cost), this.fmtNum(kwh, 1));
+    const pct = typeof p.savings_pct === "number" ? p.savings_pct : null;
+    if (save < 0.2 || (pct !== null && pct < 2)) txt += t.littleSaving;
+    else {
+      txt += t.saves(this.fmtMoney(save), pct !== null ? `${this.fmtNum(pct, 0)} %` : "");
+      const ek = typeof p.extra_kwh === "number" ? p.extra_kwh : null;
+      if (ek !== null && ek >= 0.05) txt += t.kwhMore(this.fmtNum(ek, 1));
+      else if (ek !== null && ek <= -0.05) txt += t.kwhLess(this.fmtNum(-ek, 1));
+      else txt += ".";
+    }
+    if (typeof p.comfort_deficit === "number" && p.comfort_deficit >= 0.5) txt += t.deficit(this.fmtNum(p.comfort_deficit, 1));
+    return txt;
+  }
+
+  fmtNum(v, d = 1) { return new Intl.NumberFormat(this.locale, { minimumFractionDigits: d, maximumFractionDigits: d }).format(v); }
+
+  // ------------------------------------------------------------- feedback
+  hasFeedback(z) {
+    const f = this.entry?.features;
+    return !this._edit && ("feedback" in z || (Array.isArray(f) && f.includes("feedback")));
+  }
+  _flashFor(z) { return !!this._flash && this._flash.zone === z.zone_id && this._flash.until > Date.now(); }
+  _feedbackRow(z) {
+    const t = this.t;
+    const busy = this._fbBusy === z.zone_id;
+    const b = (kind, label, color) => el("button", {
+      class: "chip", disabled: busy || undefined, "aria-label": `${label} – ${z.name}`,
+      onclick: () => this._sendFeedback(z, kind),
+    }, el("i", { style: `background:${color}`, "aria-hidden": "true" }), label);
+    return el("div", { class: "fb", role: "group", "aria-label": t.fbLabel },
+      b("too_cold", t.fbCold, "var(--hp-setback)"), b("too_warm", t.fbWarm, "var(--hp-preheat)"));
+  }
+  async _sendFeedback(z, kind) {
+    this._fbBusy = z.zone_id; this._render();
+    let text;
+    try {
+      const res = await this._hass.connection.sendMessagePromise({ type: "heat_planner/feedback", entry_id: this.entry.entry_id, zone: z.zone_id, kind });
+      text = res?.message || "";
+    } catch (e) { text = this.t.fbFail; }
+    this._fbBusy = null;
+    if (text) {
+      this._flash = { zone: z.zone_id, text, until: Date.now() + 7000 };
+      clearTimeout(this._flashT);
+      this._flashT = setTimeout(() => { this._flash = null; if (!this._edit?.dirty?.size) this._render(); }, 7050);
+    }
+    this._render();
+  }
+
+  // ------------------------------------------------------------- tariff & peak
+  _tariffLine() {
+    const tr = this.entry?.tariff, pk = this.entry?.peak, t = this.t;
+    const parts = [];
+    if (tr?.label) parts.push(el("b", { text: tr.label }));
+    if (pk) {
+      if (pk.step_label) parts.push(t.step(pk.step_label));
+      if (typeof pk.month_avg_kw === "number") parts.push(t.top3(this.fmtNum(pk.month_avg_kw, 1)));
+      if (typeof pk.cap_kw === "number") parts.push(t.capToday(this.fmtNum(pk.cap_kw, 1)));
+    }
+    if (!parts.length) return null;
+    const line = el("p", { class: "tariff" });
+    parts.forEach((p, i) => { if (i) line.append(" · "); line.append(p); });
+    if (pk && typeof pk.next_step_kw === "number") {
+      const cost = typeof pk.step_cost === "number" ? this.fmtMoney(pk.step_cost) : "";
+      line.title = t.nextStep(this.fmtNum(pk.next_step_kw, 1), cost);
+      if (Array.isArray(pk.top3_kw) && pk.top3_kw.length) line.title += ` · ${pk.top3_kw.map((v) => this.fmtNum(v, 1)).join(" / ")} kW`;
+    }
+    return line;
+  }
+
+  _loadRow(z) {
+    // Thin home-load row aligned with the chart, with the day's capacity cap as a dashed line.
+    const cap = this.entry?.peak?.cap_kw;
+    const series = this._series_ || [];
+    if (this._edit || typeof cap !== "number" || !this._geo || !series.some((s) => typeof s.kw === "number")) return null;
+    const { X, bw, W, m } = this._geo;
+    const H = 30, top = 4, base = H - 4;
+    const max = Math.max(cap * 1.15, ...series.map((s) => (typeof s.kw === "number" ? s.kw : 0)));
+    const Yk = (v) => base - (v / max) * (base - top);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, class: "loadrow", role: "img",
+      "aria-label": `${this.t.homeLoad} · ${this.t.capToday(this.fmtNum(cap, 1))}` });
+    series.forEach((s, i) => {
+      if (typeof s.kw !== "number") return;
+      const y = Yk(s.kw);
+      svg.append(el("rect", { class: `kwbar${s.kw > cap ? " over" : ""}`, x: X(i) + bw * 0.22, y, width: bw * 0.56, height: Math.max(1, base - y), rx: Math.min(1.5, bw * 0.2) }));
+    });
+    svg.append(el("line", { class: "cap", x1: m.l, x2: W - m.r, y1: Yk(cap), y2: Yk(cap) }));
+    svg.append(el("text", { x: m.l - 6, y: Yk(cap) + 3.5, "text-anchor": "end", text: "kW" }));
+    return svg;
   }
 
   // ------------------------------------------------------------- render
@@ -344,18 +478,25 @@ class HeatPlannerCard extends HTMLElement {
     const story = el("p", { class: "story", html: this.story(z) });
     if (z.manual_until) story.append(el("span", { class: "badge", text: t.manualBadge }));
     card.append(story);
+    if (this.hasFeedback(z)) card.append(this._feedbackRow(z));
 
     const chart = el("div", { class: "chartwrap" });
     card.append(chart);
     this._drawChart(chart, z);
     this._bindChart(chart, z);
+    const load = this._loadRow(z);
+    if (load) card.append(load);
+    const tariff = this._tariffLine();
+    if (tariff) card.append(tariff);
 
     card.append(this._legend(z));
 
     if (this._edit) card.append(this._editor(z));
     else {
       const bar = el("div", { class: "bar" },
-        el("span", { class: "cost", text: this.costLine(z) }),
+        this._flashFor(z)
+          ? el("span", { class: "cost flash", role: "status", "aria-live": "polite", text: this._flash.text })
+          : el("span", { class: "cost", role: "status", "aria-live": "polite", text: this.costLine(z) }),
         el("div", { class: "row" },
           customElements.get("heat-planner-help")
             ? el("button", { class: "btn ghost", text: this._showHelp ? t.closeHelp : t.help, "aria-expanded": String(!!this._showHelp),
@@ -707,15 +848,44 @@ class HeatPlannerCard extends HTMLElement {
       if (!pct) stepper(t.safety, "safety_min_temp", 0.5, 5, 25, (v) => this.fmtT(v, z));
     }
     stepper(t.away, "away_offset", pct ? 5 : 0.5, pct ? -80 : -10, 0, (v) => `${v}${unit}`);
-    stepper(t.warmFrom, "away_until_hour", 1, 0, 23, (v) => `${String(v).padStart(2, "0")}:00`);
+    this._warmFrom(z, grid);
     stepper(t.protectFrom, "protected_from_hour", 1, 0, 23, (v) => `${String(v).padStart(2, "0")}:00`);
     stepper(t.protectTo, "protected_to_hour", 1, 1, 24, (v) => `${String(v).padStart(2, "0")}:00`);
     const notes = [];
     if (!pct && z.thermal) notes.push(t.model(z.thermal.gross_rate, Math.round(z.thermal.tau_hours * Math.LN2), z.thermal.learned));
+    const th = z.thermal || {};
+    const q = t.quality[th.quality] || th.quality || null;
+    if (!pct && typeof th.rmse === "number") notes.push(t.fit(this.fmtNum(th.rmse, 1), q));
+    else if (q) notes.push(t.fitQ(q));
+    if (!pct && (th.solar_gain ?? th.solar) > 0) notes.push(t.solar);
+    const lag = th.lag_hours ?? th.lag;
+    if (!pct && typeof lag === "number" && lag >= 0.25) notes.push(t.lag(this.fmtNum(lag, lag < 2 ? 1 : 0)));
     if (z.heater_kw) notes.push(t.power(z.heater_kw, z.heater_kw_source));
     if (notes.length) grid.append(el("div", { class: "model", text: notes.join(" ") }));
     d.append(grid);
     return d;
+  }
+
+  _warmFrom(z, grid) {
+    // "Warm again from": a fixed hour, or Auto (-1) = learned from when you usually get home.
+    const t = this.t;
+    const v = z.settings.away_until_hour;
+    const hasAuto = !!this.entry && "arrival" in this.entry;
+    const arr = this.entry?.arrival || null;
+    const auto = v === -1 || v === "auto";
+    const hh = (h) => `${String(h).padStart(2, "0")}:00`;
+    const learned = typeof arr?.warm_from === "number" ? arr.warm_from : null;
+    const base = auto ? (learned ?? 13) : v;
+    const set = (nv) => this._settings(z, { away_until_hour: nv });
+    grid.append(el("label", { text: t.warmFrom }),
+      el("div", { class: "step" },
+        hasAuto || auto ? el("button", { class: "chip", "aria-pressed": String(auto), text: t.autoLbl,
+          onclick: () => set(auto ? base : -1) }) : null,
+        el("button", { "aria-label": `${t.warmFrom} −`, text: "−", onclick: () => set(Math.max(0, base - 1)) }),
+        el("span", { class: "val", text: auto ? (learned !== null ? t.autoAt(hh(learned)) : t.autoLbl) : hh(v) }),
+        el("button", { "aria-label": `${t.warmFrom} +`, text: "+", onclick: () => set(Math.min(23, base + 1)) })));
+    if (arr?.expected) grid.append(el("div", { class: "model", text: t.arrival(arr.expected) }));
+    else if (auto) grid.append(el("div", { class: "model", text: t.arrivalLearning }));
   }
 }
 
