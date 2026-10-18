@@ -191,6 +191,7 @@ summary::before { content:"+ "; } details[open] summary::before { content:"– "
 .loadrow { margin-top:2px; }
 .loadrow .kwbar { fill:var(--hp-normal); opacity:.55; }
 .loadrow .kwbar.over { fill:var(--hp-ext); opacity:.85; }
+.loadrow .kwbar.live { opacity:.8; }
 .loadrow .cap { stroke:var(--hp-ext); stroke-width:1; stroke-dasharray:3 3; opacity:.8; }
 .loadrow text { fill:var(--hp-soft); font-size:10px; }
 .step .chip { font-size:12px; padding:3px 9px; margin-right:4px; }
@@ -436,20 +437,25 @@ class HeatPlannerCard extends HTMLElement {
   }
 
   _loadRow(z) {
-    // Thin home-load row aligned with the chart, with the day's capacity cap as a dashed line.
-    const cap = this.entry?.peak?.cap_kw;
+    // Thin home-load row aligned with the chart (whole house: rest of the home + planned
+    // heating, the current hour live from the meter), with the day's cap as a dashed line.
+    const pk = this.entry?.peak, cap = pk?.cap_kw;
     const series = this._series_ || [];
-    if (this._edit || typeof cap !== "number" || !this._geo || !series.some((s) => typeof s.kw === "number")) return null;
+    if (this._edit || !pk || typeof cap !== "number" || !this._geo || !Array.isArray(pk.load)) return null;
+    const key = (d) => this.dateKey(d) + "T" + this.hh(d);
+    const byKey = new Map(pk.load.map((l) => [key(l.start), l]));
+    const rows = series.map((s) => (s.start ? byKey.get(key(s.start)) : null) || null);
+    if (!rows.some((r) => r && typeof r.kw === "number")) return null;
     const { X, bw, W, m } = this._geo;
     const H = 30, top = 4, base = H - 4;
-    const max = Math.max(cap * 1.15, ...series.map((s) => (typeof s.kw === "number" ? s.kw : 0)));
+    const max = Math.max(cap * 1.15, ...rows.map((r) => (r && typeof r.kw === "number" ? r.kw : 0)));
     const Yk = (v) => base - (v / max) * (base - top);
     const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, class: "loadrow", role: "img",
       "aria-label": `${this.t.homeLoad} · ${this.t.capToday(this.fmtNum(cap, 1))}` });
-    series.forEach((s, i) => {
-      if (typeof s.kw !== "number") return;
-      const y = Yk(s.kw);
-      svg.append(el("rect", { class: `kwbar${s.kw > cap ? " over" : ""}`, x: X(i) + bw * 0.22, y, width: bw * 0.56, height: Math.max(1, base - y), rx: Math.min(1.5, bw * 0.2) }));
+    rows.forEach((r, i) => {
+      if (!r || typeof r.kw !== "number") return;
+      const y = Yk(r.kw);
+      svg.append(el("rect", { class: `kwbar${r.kw > cap ? " over" : ""}${r.live ? " live" : ""}`, x: X(i) + bw * 0.22, y, width: bw * 0.56, height: Math.max(1, base - y), rx: Math.min(1.5, bw * 0.2) }));
     });
     svg.append(el("line", { class: "cap", x1: m.l, x2: W - m.r, y1: Yk(cap), y2: Yk(cap) }));
     svg.append(el("text", { x: m.l - 6, y: Yk(cap) + 3.5, "text-anchor": "end", text: "kW" }));

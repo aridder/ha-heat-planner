@@ -53,6 +53,7 @@ from .assistant import (
     describe_proposal,
     validate_proposal,
 )
+from .insights import ALERT_KINDS, CONF_ALERT_KINDS, CONF_ALERTS, CONF_NOTIFY_SERVICE
 from .discovery import HEATING_SOURCES, HOUSE_TYPES, INSULATION, default_heater_kw, describe, discover
 from .onboarding import (
     OTHER_SENSOR,
@@ -321,6 +322,32 @@ def _history_schema(d: dict[str, Any]) -> vol.Schema:
     return vol.Schema({vol.Required(CONF_USE_HISTORY, default=d.get(CONF_USE_HISTORY, True)): bool})
 
 
+def _alerts_schema(d: dict[str, Any]) -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Optional(
+                CONF_NOTIFY_SERVICE, description={"suggested_value": d.get(CONF_NOTIFY_SERVICE) or ""}
+            ): selector.TextSelector(),
+            vol.Optional(CONF_ALERT_KINDS, default=list(d.get(CONF_ALERT_KINDS, ALERT_KINDS))): selector.SelectSelector(
+                selector.SelectSelectorConfig(
+                    options=list(ALERT_KINDS),
+                    multiple=True,
+                    translation_key="alert_kind",
+                    mode=selector.SelectSelectorMode.LIST,
+                )
+            ),
+        }
+    )
+
+
+def _valid_notify(hass: HomeAssistant, service: str) -> bool:
+    """``notify.mobile_app_x`` (a notify service) or a notify entity."""
+    domain, _, name = service.partition(".")
+    if domain != "notify" or not name:
+        return False
+    return hass.services.has_service(domain, name) or hass.states.get(service) is not None
+
+
 def _zones_schema(cands, preselect: list[str]) -> vol.Schema:
     return vol.Schema(
         {
@@ -481,7 +508,7 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
         menu = ["assistant", "discover", "add_zone"]
         if self._zones:
             menu += ["edit_zone", "remove_zone"]
-        menu += ["house", "energy", "history", "general"]
+        menu += ["house", "energy", "history", "general", "alerts"]
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     # -- zones ---------------------------------------------------------------
@@ -620,6 +647,25 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
             self._opts[CONF_ENERGY] = user_input
             return self.async_create_entry(data=self._opts)
         return self.async_show_form(step_id="energy", data_schema=_energy_schema(energy_defaults(self.hass, self._opts)))
+
+    async def async_step_alerts(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Where to send alerts (events are always fired) and which kinds."""
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            service = (user_input.get(CONF_NOTIFY_SERVICE) or "").strip()
+            if service and not _valid_notify(self.hass, service):
+                errors[CONF_NOTIFY_SERVICE] = "invalid_notify"
+            else:
+                self._opts[CONF_ALERTS] = {
+                    CONF_NOTIFY_SERVICE: service,
+                    CONF_ALERT_KINDS: [k for k in user_input.get(CONF_ALERT_KINDS, []) if k in ALERT_KINDS],
+                }
+                return self.async_create_entry(data=self._opts)
+        return self.async_show_form(
+            step_id="alerts",
+            data_schema=_alerts_schema(user_input or self._opts.get(CONF_ALERTS) or {}),
+            errors=errors,
+        )
 
     async def async_step_general(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

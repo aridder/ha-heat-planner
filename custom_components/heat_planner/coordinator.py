@@ -12,6 +12,7 @@ from typing import Any
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import STATE_HOME, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import Event, HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import (
     async_track_state_change_event,
     async_track_time_change,
@@ -48,13 +49,29 @@ from .energy import (
     async_house_hourly_kwh,
     apply_cuts,
     base_load,
-        house_meter,
+    house_meter,
     limit,
     peak_from_options,
     plan_caps,
     tariff_from_options,
 )
 from .learning import samples_from_history
+from .insights import (
+    ALERT_EXTREME_TOMORROW,
+    ALERT_KINDS,
+    ALERT_MODEL_POOR,
+    ALERT_PEAK_RISK,
+    CONF_ALERT_KINDS,
+    CONF_ALERTS,
+    CONF_NOTIFY_SERVICE,
+    EVENT_ALERT,
+    PEAK_RISK_MARGIN_KW,
+    alert_message,
+    lang_of,
+    load_series,
+    roll_savings,
+    savings_value,
+)
 from .feedback import apply_feedback, changed_keys, shift_schedule
 from .occupancy import AUTO_HOUR, ArrivalModel, expected_arrival, learn_arrivals, summary as arrival_summary, warm_from_hour
 from .peak import realtime_shed
@@ -119,6 +136,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.spot_hours: dict[datetime, float] = {}
         self.peak_state = None
         self._house_kwh: dict[datetime, float] = {}
+        self._peak_base: dict[int, float] = {}
         self._house_fetched: datetime | None = None
         self._shed: dict[str, datetime] = {}
         self._meter_last: tuple[datetime, float] | None = None
@@ -289,6 +307,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
+        await self._save()  # flush savings/alert book-keeping before a reload
         await super().async_shutdown()
 
     async def _save(self) -> None:
@@ -309,6 +328,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._guard_at = now
         before = set(self._shed)
         self._realtime_guard()
+        async_dispatcher_send(self.hass, self.live_signal)
         if set(self._shed) != before:
             _LOGGER.info("Capacity guard: setting back %s", sorted(self._shed) or "nothing")
             for zid in before ^ set(self._shed):
@@ -421,6 +441,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         hours: int = PLAN_HOURS,
         start: datetime | None = None,
         adjust=None,
+        method: str | None = None,
     ) -> Plan:
         return build_plan(
             zone or self.zone(zone_id),
@@ -434,7 +455,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             room_temp=self.room_temperature(zone_id),
             outdoor=self.outdoor,
             outdoor_default=self.outdoor_now(),
-            method="optimize" if self.optimize else "rules",
+            method=method or ("optimize" if self.optimize else "rules"),
             solar=self.solar or None,
             adjust=adjust,
         )
@@ -483,6 +504,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sum(h.kwh for h in p.hours) / max(len(p.hours), 1) for p in self.plans.values()
         )
         base = {h: max(0.0, v - heating_avg) for h, v in base_load(hourly).items()}
+        self._peak_base = base
         priority = {z[CONF_ZONE_ID]: int(z.get("priority", 0) or 0) for z in self.zone_configs}
 
         def day_peaks(plans: dict[str, Plan]) -> dict[Any, float]:
@@ -569,6 +591,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._track_energy(kw, now)
         left = 1 - (now.minute * 60 + now.second) / 3600
         projected = self._hour_kwh + kw * left
+        if projected > state.cap_kw - PEAK_RISK_MARGIN_KW:
+            hour = now.replace(minute=0, second=0, microsecond=0)
+            self.alert(
+                ALERT_PEAK_RISK, key=hour.isoformat(),
+                projected_kwh=round(projected, 2), cap_kw=state.cap_kw,
+            )
         end_of_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
         zones = []
         for zid, p in self.plans.items():
@@ -609,7 +637,130 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._restore(zid)
         for zid, plan in self.plans.items():
             await self._apply(zid, plan)
+        try:
+            self._check_extreme_tomorrow()
+            self._update_savings()
+        except Exception:  # noqa: BLE001 - book-keeping must never stop control
+            _LOGGER.exception("Savings/alert book-keeping failed")
         return {"updated": dt_util.now().isoformat()}
+
+    # ------------------------------------------------------------------ insights
+
+    @property
+    def live_signal(self) -> str:
+        return f"{DOMAIN}_{self.config_entry.entry_id}_live"
+
+    @property
+    def lang(self) -> str:
+        return lang_of(self.hass.config.language)
+
+    def projected_hour_kwh(self) -> float | None:
+        """This clock hour's energy so far plus the latest meter reading to the end of the hour."""
+        now = dt_util.now()
+        hour = now.replace(minute=0, second=0, microsecond=0)
+        last = self._meter_last
+        if last is None or self._meter_hour != hour or now - last[0] > timedelta(minutes=10):
+            return None
+        left = (hour + timedelta(hours=1) - last[0]).total_seconds() / 3600
+        return self._hour_kwh + last[1] * max(0.0, left)
+
+    def peak_headroom(self) -> float | None:
+        state = self.peak_state
+        projected = self.projected_hour_kwh()
+        if state is None or state.cap_kw is None or projected is None:
+            return None
+        return round(state.cap_kw - projected, 2)
+
+    def effective_price_now(self) -> float | None:
+        now = dt_util.now().replace(minute=0, second=0, microsecond=0)
+        return self.price_hours.get(now)
+
+    def alert(self, kind: str, *, key: str, scope: str = "", **data: Any) -> bool:
+        """Fire ``heat_planner_alert`` (and notify) unless this kind/scope already fired for ``key``."""
+        sent = self.state.setdefault("alerts_sent", {})
+        slot = f"{kind}:{scope}" if scope else kind
+        if sent.get(slot) == key:
+            return False
+        sent[slot] = key
+        self.store.async_delay_save(lambda: self.state, 5)
+        message = alert_message(kind, self.lang, **data)
+        self.hass.bus.async_fire(EVENT_ALERT, {
+            **data, "kind": kind, "message": message, "entry_id": self.config_entry.entry_id,
+        })
+        cfg = self.options.get(CONF_ALERTS) or {}
+        service = (cfg.get(CONF_NOTIFY_SERVICE) or "").strip()
+        if service and kind in cfg.get(CONF_ALERT_KINDS, ALERT_KINDS):
+            self.hass.async_create_task(self._notify(service, message))
+        return True
+
+    async def _notify(self, service: str, message: str) -> None:
+        title = "Heat Planner"
+        try:
+            if service.startswith("notify.") and self.hass.states.get(service) is not None:
+                # a notify entity (new style)
+                await self.hass.services.async_call(
+                    "notify", "send_message", {"entity_id": service, "title": title, "message": message},
+                )
+                return
+            domain, _, name = service.partition(".")
+            if not name:
+                domain, name = "notify", domain
+            await self.hass.services.async_call(domain, name, {"title": title, "message": message})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.warning("Could not send Heat Planner alert via %s: %s", service, err)
+
+    def _check_extreme_tomorrow(self) -> None:
+        """Once per day, when tomorrow's prices are in and contain an extreme hour."""
+        tomorrow = dt_util.now().date() + timedelta(days=1)
+        levels = classify_prices(self.price_hours, self.rules())
+        hours = sorted(h for h, lv in levels.items() if lv == "extreme" and h.date() == tomorrow)
+        if not hours:
+            return
+        span = [f"{hours[0].hour:02d}:00", f"{(hours[-1].hour + 1) % 24:02d}:00"]
+        self.alert(
+            ALERT_EXTREME_TOMORROW, key=tomorrow.isoformat(),
+            date=tomorrow.isoformat(),
+            hours=span,
+            extreme_hours=[h.isoformat() for h in hours],
+            max_price=round(max(self.price_hours[h] for h in hours), 4),
+            unit=self.prices.unit,
+        )
+
+    def _hour_savings(self, hour: datetime) -> float | None:
+        """Baseline minus planned cost for ``hour`` across automatically controlled zones."""
+        total = 0.0
+        any_zone = False
+        for zid, plan in self.plans.items():
+            if not plan.hours or plan.hours[0].start != hour or plan.hours[0].cost is None:
+                continue
+            st = self.zone_state(zid)
+            if not st.get("auto", True) or self.manual_until(zid):
+                continue
+            try:
+                # one hour without price logic or absence = what this hour costs without us
+                base = self.plan_zone(zid, hours=1, method="rules", start=hour)
+            except Exception:  # noqa: BLE001
+                _LOGGER.debug("No baseline for %s", zid, exc_info=True)
+                continue
+            if base.baseline_cost is None:
+                continue
+            total += base.baseline_cost - plan.hours[0].cost
+            any_zone = True
+        return total if any_zone else None
+
+    def _update_savings(self) -> None:
+        hour = dt_util.now().replace(minute=0, second=0, microsecond=0)
+        sv = self.state.setdefault("savings", {})
+        if roll_savings(sv, hour, lambda: self._hour_savings(hour)):
+            self.store.async_delay_save(lambda: self.state, 5)
+
+    def _load_export(self) -> list[dict[str, Any]]:
+        planned: dict[datetime, float] = {}
+        for p in self.plans.values():
+            for h in p.hours:
+                planned[h.start] = planned.get(h.start, 0.0) + h.kwh
+        planned = {t: v + self._peak_base.get(t.hour, 0.0) for t, v in planned.items()}
+        return load_series(self._house_kwh, planned, dt_util.now(), live_kwh=self.projected_hour_kwh())
 
     # ------------------------------------------------------------------ control
 
@@ -915,11 +1066,20 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             prior = thermal_prior(self.options.get(CONF_HOUSE))
             model = fit_thermal(samples, prior)
             self.zone_state(zid)["thermal"] = asdict(model)
+            self._check_model(zid, cfg.get(CONF_NAME, zid), model)
             changed = True
             _LOGGER.debug("Thermal model for %s: %s", zid, model)
         if changed:
             await self._save()
             await self.async_request_refresh()
+
+    def _check_model(self, zone_id: str, name: str, model: ThermalModel) -> None:
+        """Alert once when a zone's learned model turns out poor (again only after it recovered)."""
+        quality = model_quality(model)
+        if model.learned and quality == "poor":
+            self.alert(ALERT_MODEL_POOR, key="poor", scope=zone_id, zone=zone_id, zone_name=name)
+        elif quality in ("good", "fair"):
+            self.state.setdefault("alerts_sent", {}).pop(f"{ALERT_MODEL_POOR}:{zone_id}", None)
 
     async def _learn_arrivals(self, end: datetime) -> bool:
         """When does the household usually get home? (from the presence history)"""
@@ -1034,7 +1194,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "features": ["feedback"],
             **({"arrival": self._arrival_export()} if self.options.get(CONF_USE_HISTORY) else {}),
             "tariff": self._tariff_export(),
-            "peak": self.peak_state.as_dict() if self.peak_state else None,
+            "savings": {
+                "month": savings_value(self.state.get("savings"), dt_util.now(), "month"),
+                "today": savings_value(self.state.get("savings"), dt_util.now(), "day"),
+            },
+            "peak": {**self.peak_state.as_dict(), "load": self._load_export()} if self.peak_state else None,
             "away": self.away,
             "history": bool(self.options.get(CONF_USE_HISTORY, False)),
             "house": self.options.get(CONF_HOUSE),

@@ -148,7 +148,8 @@
           "house": "Om huset",
           "history": "Lær av historikken",
           "general": "Pris og tilstedeværelse",
-          "energy": "Strømavtale og effekttrinn"
+          "energy": "Strømavtale og effekttrinn",
+          "alerts": "Varsler"
         }
       },
       "add_zone": {
@@ -320,6 +321,18 @@
           "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene.",
           "price_includes_vat": "Tibber og mange HACS-prissensorer gjør det. Nord Pool-integrasjonen i HA gjør det ikke."
         }
+      },
+      "alerts": {
+        "title": "Varsler",
+        "description": "Heat Planner sender alltid hendelsen `heat_planner_alert` (kind, message, entry_id) som automasjoner kan bruke. I tillegg kan den sende et kort varsel.",
+        "data": {
+          "notify_service": "Varslingstjeneste",
+          "kinds": "Send varsel om"
+        },
+        "data_description": {
+          "notify_service": "F.eks. notify.mobile_app_min_telefon (eller en varslingsentitet). La stå tom for bare hendelser.",
+          "kinds": "Hvert varsel sendes høyst én gang i timen (fare for ny effekttopp), én gang per døgn (ekstreme priser i morgen) eller én gang per rom (dårlig modell)."
+        }
       }
     },
     "error": {
@@ -329,7 +342,8 @@
       "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
       "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
       "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, også tegnene { og }.",
-      "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen."
+      "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen.",
+      "invalid_notify": "Ikke en varslingstjeneste. Bruk f.eks. notify.mobile_app_min_telefon."
     },
     "abort": {
       "nothing_new": "Fant ingen nye termostater."
@@ -402,6 +416,13 @@
         "custom": "Skriv inn selv",
         "none": "Ikke med"
       }
+    },
+    "alert_kind": {
+      "options": {
+        "peak_risk": "Fare for ny effekttopp denne timen",
+        "extreme_price_tomorrow": "Ekstreme priser i morgen",
+        "model_poor": "Varmemodellen for et rom passer dårlig"
+      }
     }
   },
   "entity": {
@@ -440,6 +461,24 @@
           "expensive": "Dyr",
           "extreme": "Ekstrem"
         }
+      },
+      "capacity_step": {
+        "name": "Effekttrinn"
+      },
+      "month_peak_average": {
+        "name": "Snitt av månedens effekttopper"
+      },
+      "peak_headroom": {
+        "name": "Effektmargin denne timen"
+      },
+      "savings_month": {
+        "name": "Besparelse denne måneden"
+      },
+      "savings_today": {
+        "name": "Besparelse i dag"
+      },
+      "effective_price": {
+        "name": "Effektiv strømpris"
       }
     },
     "switch": {

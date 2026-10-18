@@ -210,7 +210,27 @@ Per room (one device per room):
 | `number.stue_comfort_temperature` | Comfort temperature | The base the curve is built on |
 | `select.stue_price_strategy` | Price strategy | `off`, `gentle`, `balanced`, `aggressive` |
 
-Per home: `sensor.<home>_price_level` – `cheap`, `normal`, `expensive` or `extreme`.
+Per home (home `hjem`):
+
+| Entity | | |
+|---|---|---|
+| `sensor.hjem_price_level` | Price level | `cheap`, `normal`, `expensive` or `extreme` |
+| `sensor.hjem_effective_electricity_price` | Effective electricity price | This hour's price per kWh incl. contract and grid tariff (attribute `tariff`) |
+| `sensor.hjem_savings_this_month` | Savings this month | Realised estimate: each finished hour's cost without price control minus the planned cost, as planned at the start of that hour. Kept across restarts |
+| `sensor.hjem_savings_today` | Savings today | The same, for today |
+| `sensor.hjem_capacity_tariff_step` | Capacity tariff step | e.g. `5–10 kW`, with `step_cost`, `next_step_kw`, `top3_kw`, `month_avg_kw`, `cap_kw_today` (only with capacity limiting) |
+| `sensor.hjem_monthly_peak_average` | Monthly peak average | Average of the month's three highest daily peaks (kW) |
+| `sensor.hjem_peak_headroom_this_hour` | Peak headroom this hour | Today's cap minus this hour's projected energy, live from the house meter |
+
+### Alerts
+
+Heat Planner fires the event `heat_planner_alert` with `kind`, `message` and `entry_id` (plus details) for:
+
+* `peak_risk` – this hour is heading within 0.3 kW of today's cap (at most once per hour)
+* `extreme_price_tomorrow` – tomorrow's prices are in and contain an extreme hour (once per day)
+* `model_poor` – a room's learned heating model fits poorly (once, again only after it recovered)
+
+Under *Configure → Alerts* you can also have them sent to a notify service (`notify.mobile_app_…`) and pick which kinds; the message follows Home Assistant's language (Norwegian or English).
 
 ## Services and automations
 

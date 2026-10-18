@@ -6,7 +6,13 @@
       "predicted": {"default": "mdi:chart-bell-curve-cumulative"},
       "cost_24h": {"default": "mdi:cash"},
       "savings_24h": {"default": "mdi:piggy-bank"},
-      "price_level": {"default": "mdi:flash", "state": {"cheap": "mdi:flash-outline", "expensive": "mdi:flash-alert", "extreme": "mdi:flash-alert-outline"}}
+      "price_level": {"default": "mdi:flash", "state": {"cheap": "mdi:flash-outline", "expensive": "mdi:flash-alert", "extreme": "mdi:flash-alert-outline"}},
+      "capacity_step": {"default": "mdi:stairs"},
+      "month_peak_average": {"default": "mdi:chart-bar"},
+      "peak_headroom": {"default": "mdi:gauge"},
+      "savings_month": {"default": "mdi:piggy-bank-outline"},
+      "savings_today": {"default": "mdi:piggy-bank-outline"},
+      "effective_price": {"default": "mdi:cash-clock"}
     },
     "switch": {"auto": {"default": "mdi:robot-outline"}},
     "number": {"comfort": {"default": "mdi:sofa-outline"}},

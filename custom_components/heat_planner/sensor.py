@@ -9,13 +9,16 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import PERCENTAGE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
+from homeassistant.const import PERCENTAGE, UnitOfPower, UnitOfTemperature
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import HeatPlannerConfigEntry
+from .energy import peak_from_options
 from .entity import HeatPlannerEntity
+from .insights import savings_value
 from .planner import LEVEL_CHEAP, LEVEL_EXPENSIVE, LEVEL_EXTREME, LEVEL_NORMAL, MODE_PERCENT
 
 MODES = ["comfort", "setback", "preheat", "save", "off", "away", "normal", "manual", "disabled"]
@@ -27,7 +30,14 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     coord = entry.runtime_data
-    entities: list[SensorEntity] = [PriceLevelSensor(coord)]
+    entities: list[SensorEntity] = [
+        PriceLevelSensor(coord),
+        EffectivePriceSensor(coord),
+        RealisedSavingsSensor(coord, "month"),
+        RealisedSavingsSensor(coord, "day"),
+    ]
+    if peak_from_options(coord.options) is not None:
+        entities += [CapacityStepSensor(coord), MonthPeakAverageSensor(coord), PeakHeadroomSensor(coord)]
     for z in coord.zone_configs:
         zid = z["zone_id"]
         percent = z.get("mode") == MODE_PERCENT
@@ -206,4 +216,147 @@ class PriceLevelSensor(HeatPlannerEntity, SensorEntity):
             "unit": self.coordinator.prices.unit,
             "source": self.coordinator.prices.description,
             "away": self.coordinator.away,
+        }
+
+
+# --------------------------------------------------------------------------- home level
+
+
+class EffectivePriceSensor(HeatPlannerEntity, SensorEntity):
+    """What this hour's kWh costs the household (contract + grid tariff)."""
+
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coord) -> None:
+        super().__init__(coord, None, "effective_price")
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        return f"{self.coordinator.hass.config.currency}/kWh"
+
+    @property
+    def native_value(self) -> float | None:
+        price = self.coordinator.effective_price_now()
+        return None if price is None else round(price, 4)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        now = dt_util.now().replace(minute=0, second=0, microsecond=0)
+        tariff = self.coordinator._tariff_export()
+        return {"tariff": tariff.get("label"), "spot": self.coordinator.spot_hours.get(now)}
+
+
+class RealisedSavingsSensor(HeatPlannerEntity, SensorEntity):
+    """Estimated savings of the hours already past (this month / today); survives restarts."""
+
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coord, period: str) -> None:
+        super().__init__(coord, None, "savings_month" if period == "month" else "savings_today")
+        self._period = period
+
+    @property
+    def native_unit_of_measurement(self) -> str | None:
+        return self.coordinator.hass.config.currency
+
+    @property
+    def last_reset(self):
+        now = dt_util.now()
+        start = dt_util.start_of_local_day(now)
+        return start.replace(day=1) if self._period == "month" else start
+
+    @property
+    def native_value(self) -> float | None:
+        return savings_value(self.coordinator.state.get("savings"), dt_util.now(), self._period)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        sv = self.coordinator.state.get("savings") or {}
+        pending = sv.get("pending") or {}
+        return {"hours_counted": int(sv.get("hours") or 0), "current_hour_estimate": pending.get("amount")}
+
+
+class _PeakBase(HeatPlannerEntity, SensorEntity):
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.peak_state is not None
+
+
+class CapacityStepSensor(_PeakBase):
+    """The month's capacity-tariff step (e.g. "5–10 kW")."""
+
+    def __init__(self, coord) -> None:
+        super().__init__(coord, None, "capacity_step")
+
+    @property
+    def native_value(self) -> str | None:
+        return self.coordinator.peak_state.step_label if self.coordinator.peak_state else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        st = self.coordinator.peak_state
+        if st is None:
+            return {}
+        return {
+            "step_cost": st.step_cost,
+            "next_step_kw": st.next_step_kw,
+            "top3_kw": st.top3_kw,
+            "month_avg_kw": st.month_avg_kw,
+            "cap_kw_today": st.cap_kw,
+        }
+
+
+class MonthPeakAverageSensor(_PeakBase):
+    """Average of the month's three highest daily peaks – what the capacity step is based on."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coord) -> None:
+        super().__init__(coord, None, "month_peak_average")
+
+    @property
+    def native_value(self) -> float | None:
+        st = self.coordinator.peak_state
+        return st.month_avg_kw if st else None
+
+
+class PeakHeadroomSensor(_PeakBase):
+    """Today's cap minus this hour's projected energy (live from the house meter)."""
+
+    _attr_device_class = SensorDeviceClass.POWER
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = UnitOfPower.KILO_WATT
+    _attr_suggested_display_precision = 2
+
+    def __init__(self, coord) -> None:
+        super().__init__(coord, None, "peak_headroom")
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(self.hass, self.coordinator.live_signal, self._live)
+        )
+
+    @callback
+    def _live(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        return self.coordinator.peak_headroom()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        st = self.coordinator.peak_state
+        projected = self.coordinator.projected_hour_kwh()
+        return {
+            "cap_kw": st.cap_kw if st else None,
+            "projected_kwh": None if projected is None else round(projected, 2),
+            "shed": sorted(self.coordinator._shed),
         }

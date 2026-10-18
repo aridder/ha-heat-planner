@@ -148,7 +148,8 @@
           "house": "About your home",
           "history": "Learn from history",
           "general": "Price & presence",
-          "energy": "Electricity contract and capacity tariff"
+          "energy": "Electricity contract and capacity tariff",
+          "alerts": "Alerts"
         }
       },
       "add_zone": {
@@ -320,6 +321,18 @@
           "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted.",
           "price_includes_vat": "Tibber and many HACS price sensors do. Core Nord Pool does not."
         }
+      },
+      "alerts": {
+        "title": "Alerts",
+        "description": "Heat Planner always fires the event `heat_planner_alert` (kind, message, entry_id) for automations. Optionally it can also send a short notification.",
+        "data": {
+          "notify_service": "Notify service",
+          "kinds": "Send notifications for"
+        },
+        "data_description": {
+          "notify_service": "E.g. notify.mobile_app_my_phone (or a notify entity). Leave empty for events only.",
+          "kinds": "Each kind is sent at most once per hour (risk of a new peak), once per day (extreme prices tomorrow) or once per room (poor model)."
+        }
       }
     },
     "error": {
@@ -329,7 +342,8 @@
       "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
       "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
       "ai_invalid": "Could not read the answer. Paste the whole answer, including the { and } characters.",
-      "ai_no_zones": "The answer did not contain any of the thermostats found. Try again."
+      "ai_no_zones": "The answer did not contain any of the thermostats found. Try again.",
+      "invalid_notify": "Not a notify service. Use e.g. notify.mobile_app_my_phone."
     },
     "abort": {
       "nothing_new": "No new thermostats found."
@@ -402,6 +416,13 @@
         "custom": "Enter my own",
         "none": "Not included"
       }
+    },
+    "alert_kind": {
+      "options": {
+        "peak_risk": "Risk of a new power peak this hour",
+        "extreme_price_tomorrow": "Extreme prices tomorrow",
+        "model_poor": "A room's heating model fits poorly"
+      }
     }
   },
   "entity": {
@@ -440,6 +461,24 @@
           "expensive": "Expensive",
           "extreme": "Extreme"
         }
+      },
+      "capacity_step": {
+        "name": "Capacity tariff step"
+      },
+      "month_peak_average": {
+        "name": "Monthly peak average"
+      },
+      "peak_headroom": {
+        "name": "Peak headroom this hour"
+      },
+      "savings_month": {
+        "name": "Savings this month"
+      },
+      "savings_today": {
+        "name": "Savings today"
+      },
+      "effective_price": {
+        "name": "Effective electricity price"
       }
     },
     "switch": {
