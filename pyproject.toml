@@ -34,6 +34,8 @@ exclude_also = [
 target-version = "py313"
 line-length = 120
 src = ["custom_components", "tests"]
+# tools/docs: screenshot and docs-check scripts, not shipped
+extend-exclude = ["tools"]
 
 [tool.ruff.lint]
 # Close to Home Assistant core's rule set, minus the purely stylistic rules
@@ -91,7 +93,6 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S311", "PT018", "PT011", "SLF001", "F811", "E402", "PLC2401"]
-"tools/**" = ["T20", "S", "C408", "I001"]
 # Modules being reworked in parallel: findings to clean up there, not here.
 "custom_components/heat_planner/coordinator.py" = ["B023", "C408", "I001", "RUF021", "RUF100"]
 "custom_components/heat_planner/energy.py" = ["C420"]
