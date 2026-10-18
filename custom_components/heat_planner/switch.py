@@ -9,7 +9,11 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from . import HeatPlannerConfigEntry
-from .entity import HeatPlannerEntity
+from .coordinator import HeatPlannerCoordinator
+from .entity import HeatPlannerZoneEntity
+
+# Writes go through the coordinator, which serialises them itself.
+PARALLEL_UPDATES = 0
 
 
 async def async_setup_entry(
@@ -17,12 +21,15 @@ async def async_setup_entry(
     entry: HeatPlannerConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
+    """Add one automatic-control switch per zone."""
     coord = entry.runtime_data
     async_add_entities(AutoSwitch(coord, z["zone_id"]) for z in coord.zone_configs)
 
 
-class AutoSwitch(HeatPlannerEntity, SwitchEntity):
-    def __init__(self, coord, zone_id: str) -> None:
+class AutoSwitch(HeatPlannerZoneEntity, SwitchEntity):
+    """Off = Heat Planner leaves the thermostat alone."""
+
+    def __init__(self, coord: HeatPlannerCoordinator, zone_id: str) -> None:
         super().__init__(coord, zone_id, "auto")
 
     @property

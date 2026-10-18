@@ -2,22 +2,24 @@
 
 from __future__ import annotations
 
-from typing import Any
-
-import voluptuous as vol
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components import websocket_api
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.util import dt as dt_util
+import voluptuous as vol
 
-from .const import DOMAIN, SIGNAL_ENTRIES_CHANGED, SCOPE_ALL, SCOPE_DATE, SCOPE_DAYS, SCOPE_WEEKDAYS, SCOPE_WEEKEND
+from .const import DOMAIN, SCOPE_ALL, SCOPE_DATE, SCOPE_DAYS, SCOPE_WEEKDAYS, SCOPE_WEEKEND, SIGNAL_ENTRIES_CHANGED
+
+if TYPE_CHECKING:
+    from .coordinator import HeatPlannerCoordinator
 
 
-def _coordinators(hass: HomeAssistant):
+def _coordinators(hass: HomeAssistant) -> list[HeatPlannerCoordinator]:
     return [e.runtime_data for e in hass.config_entries.async_loaded_entries(DOMAIN)]
 
 
-def _get(hass: HomeAssistant, entry_id: str):
+def _get(hass: HomeAssistant, entry_id: str) -> HeatPlannerCoordinator | None:
     for coord in _coordinators(hass):
         if coord.config_entry.entry_id == entry_id:
             return coord
@@ -64,8 +66,7 @@ def ws_subscribe(
         for u in listeners:
             u()
         listeners.clear()
-        for coord in _coordinators(hass):
-            listeners.append(coord.async_add_listener(push))
+        listeners.extend(coord.async_add_listener(push) for coord in _coordinators(hass))
 
     @callback
     def entries_changed() -> None:

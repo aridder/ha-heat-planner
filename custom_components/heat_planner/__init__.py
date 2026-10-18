@@ -2,23 +2,29 @@
 
 from __future__ import annotations
 
-from pathlib import Path
 import logging
+from pathlib import Path
 
-import voluptuous as vol
-
+from homeassistant.components.frontend import add_extra_js_url
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers import config_validation as cv, device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.typing import ConfigType
+from homeassistant.util import dt as dt_util
+import voluptuous as vol
 
 from .const import (
     ATTR_ENTRY_ID,
     ATTR_ZONE,
     CARD_URL,
-    HELP_URL,
+    CONF_ZONE_ID,
+    CONF_ZONES,
     DOMAIN,
+    HELP_URL,
     PLATFORMS,
     SCOPE_ALL,
     SCOPE_DATE,
@@ -29,6 +35,8 @@ from .const import (
     VERSION,
 )
 from .coordinator import HeatPlannerCoordinator
+from .entity import async_setup_devices
+from .repairs import async_clear_issues
 from .websocket import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -64,6 +72,7 @@ RESUME_SCHEMA = vol.Schema(
 
 
 def scope_weekdays(scope: str, days: list[int] | None) -> list[int]:
+    """The weekdays (0 = Monday) a schedule scope applies to."""
     if scope == SCOPE_WEEKDAYS:
         return [0, 1, 2, 3, 4]
     if scope == SCOPE_WEEKEND:
@@ -76,10 +85,18 @@ def scope_weekdays(scope: str, days: list[int] | None) -> list[int]:
 def find_coordinator(
     hass: HomeAssistant, entry_id: str | None, zone_id: str
 ) -> HeatPlannerCoordinator:
+    """The coordinator of the (loaded) home that has this zone."""
+    if entry_id and not any(e.entry_id == entry_id for e in hass.config_entries.async_loaded_entries(DOMAIN)):
+        raise ServiceValidationError(
+            translation_domain=DOMAIN,
+            translation_key="entry_not_loaded",
+            translation_placeholders={"entry_id": entry_id},
+        )
+    entry: HeatPlannerConfigEntry
     for entry in hass.config_entries.async_loaded_entries(DOMAIN):
         if entry_id and entry.entry_id != entry_id:
             continue
-        coord: HeatPlannerCoordinator = entry.runtime_data
+        coord = entry.runtime_data
         if any(z["zone_id"] == zone_id for z in coord.zone_configs):
             return coord
     raise ServiceValidationError(
@@ -91,9 +108,6 @@ def find_coordinator(
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Register the card, websocket API and services once."""
-    from homeassistant.components.frontend import add_extra_js_url
-    from homeassistant.components.http import StaticPathConfig
-
     frontend = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
         [
@@ -122,8 +136,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             )
 
     async def clear_override(call: ServiceCall) -> None:
-        from homeassistant.util import dt as dt_util
-
         zone = call.data[ATTR_ZONE]
         coord = find_coordinator(hass, call.data.get(ATTR_ENTRY_ID), zone)
         day = call.data.get("date") or dt_util.now().date()
@@ -141,26 +153,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: HeatPlannerConfigEntry) -> bool:
-    from homeassistant.helpers import device_registry as dr
-    from homeassistant.helpers.device_registry import DeviceEntryType
-
-    dr.async_get(hass).async_get_or_create(
-        config_entry_id=entry.entry_id,
-        identifiers={(DOMAIN, entry.entry_id)},
-        name=entry.title,
-        manufacturer="Heat Planner",
-        model="Home",
-        sw_version=VERSION,
-        entry_type=DeviceEntryType.SERVICE,
-    )
+    """Set up one home: devices, coordinator, platforms."""
+    async_setup_devices(hass, entry)
     coordinator = HeatPlannerCoordinator(hass, entry)
     await coordinator.async_setup()
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
-    from homeassistant.helpers.dispatcher import async_dispatcher_send
-
     async_dispatcher_send(hass, SIGNAL_ENTRIES_CHANGED)
     return True
 
@@ -170,16 +170,27 @@ async def _async_reload(hass: HomeAssistant, entry: HeatPlannerConfigEntry) -> N
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: HeatPlannerConfigEntry) -> bool:
+    """Unload a home and give the thermostats back."""
     ok = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
     if ok:
         await entry.runtime_data.async_shutdown()
-        from homeassistant.helpers.dispatcher import async_dispatcher_send
-
+        async_clear_issues(hass, entry.entry_id)
         async_dispatcher_send(hass, SIGNAL_ENTRIES_CHANGED)
     return ok
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
-    from homeassistant.helpers.storage import Store
-
+    """Delete the stored schedules and learned models."""
+    async_clear_issues(hass, entry.entry_id)
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}").async_remove()
+
+
+async def async_remove_config_entry_device(
+    hass: HomeAssistant, entry: HeatPlannerConfigEntry, device: dr.DeviceEntry
+) -> bool:
+    """Allow deleting a zone device whose zone no longer exists."""
+    zones = {f"{entry.entry_id}_{z[CONF_ZONE_ID]}" for z in entry.options.get(CONF_ZONES, [])}
+    return not any(
+        domain == DOMAIN and (ident == entry.entry_id or ident in zones)
+        for domain, ident in device.identifiers
+    )

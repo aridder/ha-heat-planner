@@ -5,10 +5,14 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Final
 
+from homeassistant.const import Platform
+
 DOMAIN: Final = "heat_planner"
 VERSION: Final = "0.3.0"
 
-PLATFORMS: Final = ["sensor", "switch", "number", "select"]
+PLATFORMS: Final = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.SELECT]
+
+MANUFACTURER: Final = "Heat Planner"
 
 UPDATE_INTERVAL: Final = timedelta(minutes=5)
 PLAN_HOURS: Final = 36
@@ -81,3 +85,10 @@ ATTR_ENTRY_ID: Final = "entry_id"
 ATTR_ZONE: Final = "zone"
 
 SIGNAL_ENTRIES_CHANGED: Final = f"{DOMAIN}_entries_changed"
+
+# Repair issues (issue_id = f"{ISSUE_…}_{entry_id}")
+ISSUE_PRICE_UNAVAILABLE: Final = "price_unavailable"
+ISSUE_HOUSE_METER_UNAVAILABLE: Final = "house_meter_unavailable"
+ISSUE_RECORDER_MISSING: Final = "recorder_missing"
+PRICE_UNAVAILABLE_AFTER: Final = timedelta(hours=3)
+HOUSE_METER_UNAVAILABLE_AFTER: Final = timedelta(hours=1)

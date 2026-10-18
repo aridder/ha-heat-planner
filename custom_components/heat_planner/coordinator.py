@@ -46,6 +46,7 @@ from .const import (
     UPDATE_INTERVAL,
 )
 from .energy import (
+    PeakState,
     async_house_hourly_kwh,
     apply_cuts,
     base_load,
@@ -96,6 +97,7 @@ from .planner import (
 )
 from .discovery import default_heater_kw, thermal_prior
 from .prices import PriceSource
+from .repairs import async_check_issues
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -134,7 +136,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.outdoor: dict[datetime, float] = {}
         self.solar: dict[datetime, float] = {}
         self.spot_hours: dict[datetime, float] = {}
-        self.peak_state = None
+        self.peak_state: PeakState | None = None
         self._house_kwh: dict[datetime, float] = {}
         self._peak_base: dict[int, float] = {}
         self._house_fetched: datetime | None = None
@@ -650,6 +652,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._update_savings()
         except Exception:  # noqa: BLE001 - book-keeping must never stop control
             _LOGGER.exception("Savings/alert book-keeping failed")
+        async_check_issues(self)
         return {"updated": dt_util.now().isoformat()}
 
     # ------------------------------------------------------------------ insights

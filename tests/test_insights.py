@@ -5,20 +5,13 @@ import json
 from unittest.mock import patch
 
 from freezegun.api import FrozenDateTimeFactory
-
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import async_capture_events, async_mock_service
 
 from custom_components.heat_planner.coordinator import HeatPlannerCoordinator
-from custom_components.heat_planner.insights import (
-    EVENT_ALERT,
-    alert_message,
-    load_series,
-    roll_savings,
-    savings_value,
-)
+from custom_components.heat_planner.insights import EVENT_ALERT, alert_message, load_series, roll_savings, savings_value
 from custom_components.heat_planner.planner import ThermalModel
 
 from .test_energy_integration import _entry, _setup

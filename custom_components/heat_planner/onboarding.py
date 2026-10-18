@@ -119,7 +119,7 @@ def summary(hass: HomeAssistant, thermostats: int) -> str:
         )
     people = presence_defaults(hass)
     if people:
-        names = ", ".join(hass.states.get(p).name for p in people if hass.states.get(p))
+        names = ", ".join(st.name for p in people if (st := hass.states.get(p)))
         lines.append(("✅ Hvem som er hjemme: " if nb else "✅ Who is home: ") + names)
     else:
         lines.append(
@@ -130,7 +130,7 @@ def summary(hass: HomeAssistant, thermostats: int) -> str:
         )
     w = weather_default(hass)
     if w:
-        lines.append(("✅ Værvarsel: " if nb else "✅ Weather forecast: ") + (hass.states.get(w).name if hass.states.get(w) else w))
+        lines.append(("✅ Værvarsel: " if nb else "✅ Weather forecast: ") + (st.name if (st := hass.states.get(w)) else w))
     else:
         lines.append(
             "➕ Værvarsel: mangler – settes opp automatisk fra Met.no." if nb
@@ -185,8 +185,13 @@ async def async_setup_weather(hass: HomeAssistant) -> str | None:
 def parse_price_choice(hass: HomeAssistant, choice: str) -> dict[str, Any]:
     """Translate the price select value into options."""
     from .const import (
-        CONF_NORDPOOL_AREA, CONF_NORDPOOL_ENTRY, CONF_PRICE_SENSOR, CONF_PRICE_TYPE,
-        PRICE_NORDPOOL, PRICE_SENSOR, PRICE_TIBBER,
+        CONF_NORDPOOL_AREA,
+        CONF_NORDPOOL_ENTRY,
+        CONF_PRICE_SENSOR,
+        CONF_PRICE_TYPE,
+        PRICE_NORDPOOL,
+        PRICE_SENSOR,
+        PRICE_TIBBER,
     )
 
     if choice.startswith("nordpool:"):

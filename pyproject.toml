@@ -1,0 +1,148 @@
+[project]
+name = "ha-heat-planner"
+version = "0.3.0"
+description = "Price- and presence-aware heating schedules for Home Assistant (custom integration)."
+requires-python = ">=3.13"
+license = "MIT"
+
+# ---------------------------------------------------------------------------- pytest
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
+
+# ---------------------------------------------------------------------------- coverage
+
+[tool.coverage.run]
+source = ["custom_components/heat_planner"]
+branch = false
+
+[tool.coverage.report]
+fail_under = 95
+show_missing = true
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
+]
+
+# ---------------------------------------------------------------------------- ruff
+
+[tool.ruff]
+target-version = "py313"
+line-length = 120
+src = ["custom_components", "tests"]
+
+[tool.ruff.lint]
+# Close to Home Assistant core's rule set, minus the purely stylistic rules
+# that would only churn existing code.
+select = [
+    "A001",   # builtin shadowing
+    "ASYNC",  # async pitfalls
+    "B",      # bugbear
+    "BLE",    # blind except
+    "C4",     # comprehensions
+    "DTZ003", # datetime.utcnow
+    "DTZ004", # datetime.utcfromtimestamp
+    "E",      # pycodestyle
+    "F",      # pyflakes
+    "FLY",    # static join to f-string
+    "G",      # logging format
+    "I",      # isort
+    "ICN001", # import conventions
+    "ISC",    # implicit string concat
+    "LOG",    # logging
+    "N804", "N805", "N815",
+    "PERF",   # performance
+    "PGH",    # pygrep hooks
+    "PIE",
+    "PL",     # pylint
+    "PT",     # pytest style
+    "PYI",
+    "RET",    # return
+    "RSE",    # raise
+    "RUF",
+    "S",      # bandit
+    "SIM",    # simplify
+    "SLOT",
+    "T100",   # debugger
+    "T20",    # print
+    "TID",
+    "TRY",    # tryceratops
+    "UP",     # pyupgrade
+    "W",
+]
+ignore = [
+    "E501",     # line length is handled by review, not the linter
+    "PLC0415",  # optional integrations (recorder, frontend) are imported lazily on purpose
+    "PLR0911", "PLR0912", "PLR0913", "PLR0915", "PLR0917",  # complexity
+    "PLR2004",  # magic values: planning code is full of physical constants
+    "PLW2901",  # redefined loop variable
+    "RUF001", "RUF002", "RUF003",  # en dashes and Norwegian letters are intentional
+    "RUF012",   # HA entity class attributes (_attr_options) are mutable by design
+    "SIM102",   # nested ifs are often clearer
+    "SIM108",   # ternary instead of if-else
+    "TRY003",   # long exception messages
+    "TRY300",   # try-consider-else
+    "TRY400",   # error-instead-of-exception
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S311", "PT018", "PT011", "SLF001", "F811", "E402", "PLC2401"]
+"tools/**" = ["T20", "S", "C408", "I001"]
+# Modules being reworked in parallel: findings to clean up there, not here.
+"custom_components/heat_planner/coordinator.py" = ["B023", "C408", "I001", "RUF021", "RUF100"]
+"custom_components/heat_planner/energy.py" = ["C420"]
+"custom_components/heat_planner/optimizer.py" = ["B905", "I001", "PLR1730", "PLW3301", "RUF022", "RUF046"]
+"custom_components/heat_planner/peak.py" = ["C416", "UP034", "UP035", "UP037"]
+"custom_components/heat_planner/planner.py" = ["B905", "I001", "RUF046", "S110", "UP035"]
+"custom_components/heat_planner/tariff.py" = ["UP037"]
+"tests/test_model.py" = ["RUF046", "UP017"]
+"tests/test_optimizer.py" = ["B905", "I001", "RUF007"]
+"tests/test_peak.py" = ["PT006"]
+"tests/test_planner.py" = ["E741", "I001"]
+"tests/test_tariff.py" = ["I001", "PT006"]
+
+[tool.ruff.lint.isort]
+force-sort-within-sections = true
+known-first-party = ["custom_components.heat_planner"]
+combine-as-imports = true
+split-on-trailing-comma = false
+
+# ---------------------------------------------------------------------------- mypy
+
+[tool.mypy]
+python_version = "3.13"
+files = ["custom_components/heat_planner"]
+show_error_codes = true
+follow_imports = "silent"
+local_partial_types = true
+strict_equality = true
+no_implicit_optional = true
+warn_incomplete_stub = true
+warn_redundant_casts = true
+warn_unused_configs = true
+warn_unused_ignores = true
+enable_error_code = ["ignore-without-code", "redundant-self", "truthy-iterable"]
+disable_error_code = ["annotation-unchecked", "import-not-found", "import-untyped"]
+extra_checks = false
+check_untyped_defs = true
+disallow_incomplete_defs = true
+disallow_subclassing_any = true
+disallow_untyped_calls = true
+disallow_untyped_decorators = true
+disallow_untyped_defs = true
+warn_return_any = true
+warn_unreachable = true
+
+# Not yet strictly typed: the planning core is being reworked in parallel and the
+# coordinator is large. Remove modules from this list as they are cleaned up.
+[[tool.mypy.overrides]]
+module = [
+    "heat_planner.coordinator",
+    "heat_planner.optimizer",
+    "heat_planner.planner",
+]
+ignore_errors = true

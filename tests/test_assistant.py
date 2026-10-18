@@ -31,8 +31,7 @@ async def _start(hass):
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"name": "Hjem", "price_source": f"sensor:{PRICE_SENSOR}", "weather_entity": "weather.x"})
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
     assert r["step_id"] == "energy"
-    r = await hass.config_entries.flow.async_configure(r["flow_id"], {})
-    return r
+    return await hass.config_entries.flow.async_configure(r["flow_id"], {})
 
 
 async def test_validate_clamps_and_ignores_unknown(hass: HomeAssistant, setup_states) -> None:

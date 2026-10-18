@@ -1,17 +1,10 @@
 """Discovery of heating devices and the house description."""
 
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import area_registry as ar
-from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
-from custom_components.heat_planner.discovery import (
-    default_heater_kw,
-    describe,
-    discover,
-    thermal_prior,
-)
+from custom_components.heat_planner.discovery import default_heater_kw, describe, discover, thermal_prior
 
 
 def _device(hass, entry, name, area_id=None):

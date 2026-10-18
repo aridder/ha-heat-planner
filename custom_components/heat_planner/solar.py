@@ -8,9 +8,10 @@ only that it rises and falls with the real sunshine.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 import math
-from typing import Any, Iterable
+from typing import Any
 
 # Rough cloud cover (%) for Home Assistant weather conditions, used when a
 # forecast has no ``cloud_coverage``.
@@ -38,8 +39,8 @@ UNKNOWN_SKY = 0.6
 
 def _utc(when: datetime) -> datetime:
     if when.tzinfo is None:
-        return when.replace(tzinfo=timezone.utc)
-    return when.astimezone(timezone.utc)
+        return when.replace(tzinfo=UTC)
+    return when.astimezone(UTC)
 
 
 def sun_elevation(when: datetime, lat: float, lon: float) -> float:
@@ -87,7 +88,7 @@ def cloud_attenuation(cloud_coverage_pct: float | None) -> float:
     if cloud_coverage_pct is None:
         return UNKNOWN_SKY
     c = max(0.0, min(100.0, float(cloud_coverage_pct))) / 100.0
-    return 1.0 - 0.75 * c**3.4
+    return float(1.0 - 0.75 * c**3.4)
 
 
 def solar_factor(
@@ -128,7 +129,7 @@ def _parse_dt(v: Any) -> datetime | None:
 
 
 def forecast_solar(
-    forecast_items: Iterable[dict[str, Any]] | None, lat: float, lon: float
+    forecast_items: Iterable[Any] | None, lat: float, lon: float
 ) -> dict[datetime, float]:
     """Hourly 0..1 solar factor from Home Assistant weather forecast items.
 

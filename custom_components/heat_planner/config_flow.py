@@ -9,10 +9,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import voluptuous as vol
-
 from homeassistant.config_entries import (
+    SOURCE_RECONFIGURE,
     ConfigEntry,
+    ConfigEntryBaseFlow,
     ConfigFlow,
     ConfigFlowResult,
     OptionsFlow,
@@ -20,7 +20,9 @@ from homeassistant.config_entries import (
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 from homeassistant.util import slugify
+import voluptuous as vol
 
+from .assistant import ai_task_entities, async_ask_ai, build_prompt, describe_proposal, validate_proposal
 from .const import (
     CONF_CLIMATE,
     CONF_COMFORT,
@@ -46,15 +48,8 @@ from .const import (
     PRICE_SENSOR,
     PRICE_TIBBER,
 )
-from .assistant import (
-    ai_task_entities,
-    async_ask_ai,
-    build_prompt,
-    describe_proposal,
-    validate_proposal,
-)
+from .discovery import HEATING_SOURCES, HOUSE_TYPES, INSULATION, Candidate, default_heater_kw, describe, discover
 from .insights import ALERT_KINDS, CONF_ALERT_KINDS, CONF_ALERTS, CONF_NOTIFY_SERVICE
-from .discovery import HEATING_SOURCES, HOUSE_TYPES, INSULATION, default_heater_kw, describe, discover
 from .onboarding import (
     OTHER_SENSOR,
     SETUP_NORDPOOL,
@@ -89,16 +84,21 @@ def _routine_schema(hass: HomeAssistant, with_ai: bool, d: dict[str, Any]) -> vo
     return vol.Schema(fields)
 
 
-class _AssistantMixin:
+class _AssistantMixin(ConfigEntryBaseFlow):
     """Shared AI steps for the config and options flows."""
 
-    hass: HomeAssistant
     _house: dict[str, Any]
     _proposal: dict[str, Any] | None
     _prompt: str
 
-    def _cands(self):
+    def _cands(self) -> list[Candidate]:
         return discover(self.hass)
+
+    async def _accept_proposal(self, proposal: dict[str, Any]) -> ConfigFlowResult:
+        raise NotImplementedError
+
+    async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        raise NotImplementedError
 
     def _setup_menu(self) -> list[str]:
         menu = ["zones"]
@@ -159,15 +159,15 @@ class _AssistantMixin:
         )
 
     async def async_step_ai_review(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        assert self._proposal is not None
-        if user_input is not None:
-            if user_input.get("accept", True):
-                return await self._accept_proposal(self._proposal)
+        proposal = self._proposal
+        if proposal is None or (user_input is not None and not user_input.get("accept", True)):
             return await self.async_step_zones()
+        if user_input is not None:
+            return await self._accept_proposal(proposal)
         return self.async_show_form(
             step_id="ai_review",
             data_schema=vol.Schema({vol.Required("accept", default=True): bool}),
-            description_placeholders={"proposal": describe_proposal(self.hass, self._proposal)},
+            description_placeholders={"proposal": describe_proposal(self.hass, proposal)},
         )
 
 
@@ -348,7 +348,7 @@ def _valid_notify(hass: HomeAssistant, service: str) -> bool:
     return hass.services.has_service(domain, name) or hass.states.get(service) is not None
 
 
-def _zones_schema(cands, preselect: list[str]) -> vol.Schema:
+def _zones_schema(cands: list[Candidate], preselect: list[str]) -> vol.Schema:
     return vol.Schema(
         {
             vol.Optional("zones", default=preselect): selector.SelectSelector(
@@ -362,7 +362,7 @@ def _zones_schema(cands, preselect: list[str]) -> vol.Schema:
     )
 
 
-def _zones_from(cands, picked: list[str], house: dict[str, Any]) -> list[dict[str, Any]]:
+def _zones_from(cands: list[Candidate], picked: list[str], house: dict[str, Any]) -> list[dict[str, Any]]:
     chosen = [c for c in cands if c.zone_id in picked]
     per_zone_area = None
     if chosen and house.get("heated_area"):
@@ -434,8 +434,37 @@ class HeatPlannerConfigFlow(_AssistantMixin, ConfigFlow, domain=DOMAIN):
     async def async_step_price_sensor(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._data.update({CONF_PRICE_TYPE: PRICE_SENSOR, **user_input})
+            if self.source == SOURCE_RECONFIGURE:
+                return self.async_update_reload_and_abort(
+                    self._get_reconfigure_entry(), title=self._name, options=self._data
+                )
             return await self.async_step_house()
-        return self.async_show_form(step_id="price_sensor", data_schema=_sensor_schema({}))
+        return self.async_show_form(step_id="price_sensor", data_schema=_sensor_schema(self._data))
+
+    async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """Change name, price source, presence and weather of an existing home."""
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+        if user_input is not None:
+            data, nxt, err = await _resolve_start(self.hass, user_input)
+            if err:
+                errors[CONF_PRICE_SOURCE] = err
+            else:
+                opts = dict(entry.options)
+                for k in (CONF_NORDPOOL_ENTRY, CONF_NORDPOOL_AREA, CONF_PRICE_SENSOR, CONF_WEATHER):
+                    if k not in data:
+                        opts.pop(k, None)
+                opts.update(data)
+                self._data = opts
+                self._name = user_input.get(CONF_NAME) or entry.title
+                if nxt == "price_sensor":
+                    return await self.async_step_price_sensor()
+                return self.async_update_reload_and_abort(entry, title=self._name, options=opts)
+        return self.async_show_form(
+            step_id="reconfigure",
+            data_schema=_start_schema(self.hass, user_input or {CONF_NAME: entry.title, **entry.options}, True),
+            errors=errors,
+        )
 
     async def async_step_house(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
@@ -568,7 +597,7 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
             if any(z[CONF_ZONE_ID] == zid for z in self._zones):
                 errors[CONF_NAME] = "duplicate"
             if not errors:
-                zones = self._zones + [{CONF_ZONE_ID: zid, **user_input}]
+                zones = [*self._zones, {CONF_ZONE_ID: zid, **user_input}]
                 return self.async_create_entry(data={**self._opts, CONF_ZONES: zones})
         return self.async_show_form(
             step_id="add_zone", data_schema=self._zone_schema(user_input or {}), errors=errors
@@ -616,7 +645,7 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
         )
 
     async def async_step_discover(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
-        existing = {z.get(CONF_CLIMATE) for z in self._zones}
+        existing = {str(z[CONF_CLIMATE]) for z in self._zones if z.get(CONF_CLIMATE)}
         cands = [c for c in discover(self.hass, existing)
                  if c.zone_id not in {z[CONF_ZONE_ID] for z in self._zones}]
         if not cands:

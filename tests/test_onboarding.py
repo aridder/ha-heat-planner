@@ -3,21 +3,15 @@
 from datetime import timedelta
 from unittest.mock import patch
 
-import pytest
-
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, SupportsResponse
 from homeassistant.data_entry_flow import FlowResultType
 from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.heat_planner.const import DOMAIN
-from custom_components.heat_planner.onboarding import (
-    SETUP_NORDPOOL,
-    guess_nordpool_area,
-    price_options,
-    summary,
-)
+from custom_components.heat_planner.onboarding import SETUP_NORDPOOL, guess_nordpool_area, price_options, summary
 from custom_components.heat_planner.prices import PriceSource
 
 
