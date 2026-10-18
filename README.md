@@ -1,6 +1,9 @@
 <div align="center">
 
-# 🌡️ Heat Planner
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="custom_components/heat_planner/brand/dark_logo@2x.png">
+  <img src="custom_components/heat_planner/brand/logo@2x.png" alt="Heat Planner" width="420">
+</picture>
 
 **Plan your heating around electricity prices, who's home and how each room behaves – and see exactly why it does what it does.**
 

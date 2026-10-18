@@ -5,8 +5,8 @@ rules:
     status: done
     comment: Plans are recalculated every 5 minutes and on the hour; meters and presence are event driven.
   brands:
-    status: todo
-    comment: Logo and icon still to be submitted (HACS validation ignores brands for now).
+    status: done
+    comment: Icon and logo (light and dark, 1x/2x) ship in custom_components/heat_planner/brand/, served by Home Assistant's brands API for custom integrations.
   common-modules: done
   config-flow-test-coverage: done
   config-flow: done
