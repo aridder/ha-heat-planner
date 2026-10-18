@@ -71,6 +71,18 @@ class ThermalModel:
     tau_hours: float = 40.0
     learned: bool = False
     samples: int = 0
+    solar_gain: float = 0.0  # °C/h added at full clear-sky sun (0..1 solar factor)
+    lag_hours: float = 0.0  # dead time before heating shows in the room (slow floors)
+    rmse: float | None = None  # fit error on history, °C (None = unknown)
+
+    def step(self, temp: float, duty: float, outdoor: float, dt: float, solar: float = 0.0) -> float:
+        """Advance the room temperature by ``dt`` hours.
+
+        ``duty`` is the share of time the heater is on (0..1) and ``solar`` a 0..1
+        clear-sky solar factor. Shared by the planner, the optimiser and learning.
+        """
+        loss = (temp - outdoor) / self.tau_hours
+        return temp + (self.gross_rate * duty - loss + self.solar_gain * solar) * dt
 
 
 @dataclass
