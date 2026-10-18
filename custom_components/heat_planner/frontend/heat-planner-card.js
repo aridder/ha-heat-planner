@@ -33,7 +33,7 @@ const I18N = {
     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
     daysLong: ["Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays", "Sundays"],
     dragHint: "Drag across the hours to paint a new curve.",
-    applyTo: "Save for", onlyDay: (d) => `Only ${d}`, every: (d) => `Every ${d}`, weekdays: "Weekdays", weekend: "Weekend", all: "All days",
+    applyTo: "Save for", onlyDay: (d) => `Only ${d}`, every: (d) => `Every ${d.replace(/s$/, "")}`, weekdays: "Weekdays", weekend: "Weekend", all: "All days",
     discard: "Discard", save: "Save", saved: "Saved", resetDay: "Back to schedule", overrideNote: "This day has its own curve.",
     settings: "Settings", auto: "Automatic control", comfort: "Comfort temperature",
     strategy: "Price strategy", strategies: ["Ignore", "Gentle", "Balanced", "Aggressive"],

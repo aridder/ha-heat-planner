@@ -434,7 +434,8 @@ def _label(
         reasons += [R_EXTREME_OFF if s.level == LEVEL_EXTREME else R_EXPENSIVE, R_OPTIMIZED]
         mode = "off"
     elif act < h.ref - 1e-9:
-        reasons += [R_EXPENSIVE, R_OPTIMIZED]
+        # only call it an expensive hour when it is one; otherwise it is the optimiser's choice
+        reasons += [R_EXPENSIVE, R_OPTIMIZED] if costly else [R_OPTIMIZED]
         mode = "save"
     elif act > h.ref + 1e-9:
         extreme_ahead = any(a.level == LEVEL_EXTREME for a in ahead)
