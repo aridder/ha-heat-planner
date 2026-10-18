@@ -9,15 +9,18 @@ here the scenarios run shortened, and every invariant must hold.
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
+from itertools import pairwise
 from zoneinfo import ZoneInfo
 
 from freezegun.api import FrozenDateTimeFactory
-import pytest
-
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
+from tools.sim.harness import Scenario, run
+from tools.sim.scenarios import matrix
+from tools.sim.twin import local_day_hours
 
 from custom_components.heat_planner.const import DOMAIN
 from custom_components.heat_planner.control import (
@@ -47,12 +50,8 @@ from custom_components.heat_planner.planner import (
     hours_from,
 )
 from custom_components.heat_planner.tariff import TariffConfig, effective_prices
-from tools.sim.harness import Scenario, run
-from tools.sim.scenarios import matrix
-from tools.sim.twin import local_day_hours
 
 TZ = ZoneInfo("Europe/Oslo")
-UTC = timezone.utc
 DST_DAY = datetime(2026, 10, 25, tzinfo=TZ).date()  # 25 hours
 SPRING_DAY = datetime(2027, 3, 28, tzinfo=TZ).date()  # 23 hours
 SCHEDULE = default_schedule("setpoint")
@@ -87,7 +86,7 @@ def test_plan_steps_real_hours_through_autumn_dst() -> None:
     plan = build_plan(_zone(), SCHEDULE, {}, prices, PriceRules(), start, 36, room_temp=21.0)
     utc = [h.start.astimezone(UTC) for h in plan.hours]
     # before: wall-clock "+ 1 h" skipped the second 02:00 (23 real hours in 24 slots)
-    assert all(b - a == timedelta(hours=1) for a, b in zip(utc, utc[1:]))
+    assert all(b - a == timedelta(hours=1) for a, b in pairwise(utc))
     sunday = [h for h in plan.hours if h.start.date() == DST_DAY]
     assert [h.start.hour for h in sunday[:5]] == [0, 1, 2, 2, 3]
     # schedule index on a 25-hour day: both 02:00 hours use hour 2, 03:00 uses hour 3
@@ -114,7 +113,7 @@ def test_hours_from_and_fixed_prices_on_dst_day() -> None:
     assert len({h.astimezone(UTC) for h in hours}) == 36
     # Norgespris without any spot data: one price per real hour
     cfg = TariffConfig(mode="fixed", fixed_price=0.5)
-    assert len(effective_prices({h: 0.0 for h in hours}, cfg)) == 36
+    assert len(effective_prices(dict.fromkeys(hours, 0.0), cfg)) == 36
 
 
 def test_hour_meter_restarts_in_the_repeated_hour() -> None:
@@ -399,7 +398,7 @@ async def test_coordinator_through_the_autumn_dst_night(hass: HomeAssistant, fre
         assert first.start == hour_key(now)
         assert coord.effective_price_now() == first.price
         starts = [h.start.astimezone(UTC) for h in coord.plans["stue"].hours]
-        assert all(b - a == timedelta(hours=1) for a, b in zip(starts, starts[1:]))
+        assert all(b - a == timedelta(hours=1) for a, b in pairwise(starts))
         seen.append(first.start.isoformat())
         utc += timedelta(hours=1)
     assert "2026-10-25T02:00:00+02:00" in seen and "2026-10-25T02:00:00+01:00" in seen

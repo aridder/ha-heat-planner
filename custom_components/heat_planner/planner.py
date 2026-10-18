@@ -15,7 +15,7 @@ from __future__ import annotations
 from bisect import bisect_left, bisect_right
 from collections import deque
 from dataclasses import dataclass, field, asdict, replace
-from datetime import date, datetime, timedelta, timezone, tzinfo
+from datetime import date, datetime, timedelta, timezone, tzinfo, UTC
 from math import ceil, sqrt
 from statistics import median
 from typing import Iterable
@@ -161,7 +161,7 @@ def hours_from(start: datetime, n: int, tz: tzinfo | None = None) -> list[dateti
     if first.tzinfo is None:
         return [first + timedelta(hours=i) for i in range(n)]
     zone = tz or start.tzinfo
-    base = first.astimezone(timezone.utc)
+    base = first.astimezone(UTC)
     return [hour_key((base + timedelta(hours=i)).astimezone(zone)) for i in range(n)]
 
 

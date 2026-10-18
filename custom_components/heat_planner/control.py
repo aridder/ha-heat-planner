@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from .peak import realtime_shed
@@ -32,7 +32,7 @@ AVG_SECONDS = 600.0  # time constant of the live meter's moving average
 
 
 def _utc(when: datetime) -> datetime:
-    return when.astimezone(timezone.utc)
+    return when.astimezone(UTC)
 
 
 def elapsed(later: datetime, earlier: datetime) -> timedelta:
@@ -264,7 +264,7 @@ def live_shed(
     """
     left = 1 - (now.minute * 60 + now.second) / 3600
     end_of_hour = hour_key(now) + timedelta(hours=1)  # real time, also on DST days
-    items = []
+    items: list[dict[str, Any]] = []
     for zid, p in plans.items():
         if not p.hours or zid not in zones:
             continue
@@ -300,9 +300,9 @@ def day_peaks(
         for h in p.hours:
             load[h.start] = load.get(h.start, 0.0) + h.kwh
     out: dict[date, float] = {}
-    for h, v in load.items():
-        over = v + base.get(h.hour, 0.0) - caps.get(h, 1e9)
-        out[h.date()] = max(out.get(h.date(), -1e9), over)
+    for start, v in load.items():
+        over = v + base.get(start.hour, 0.0) - caps.get(start, 1e9)
+        out[start.date()] = max(out.get(start.date(), -1e9), over)
     return out
 
 
