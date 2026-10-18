@@ -15,6 +15,7 @@ from .const import (
     CONF_PRICE_SENSOR,
     CONF_PRICE_TYPE,
     PRICE_NORDPOOL,
+    PRICE_TIBBER,
 )
 from .planner import PricePoint
 
@@ -95,6 +96,8 @@ class PriceSource:
     def description(self) -> str:
         if self.config.get(CONF_PRICE_TYPE) == PRICE_NORDPOOL:
             return f"Nord Pool {self.config.get(CONF_NORDPOOL_AREA, '')}".strip()
+        if self.config.get(CONF_PRICE_TYPE) == PRICE_TIBBER:
+            return "Tibber"
         return str(self.config.get(CONF_PRICE_SENSOR))
 
     async def async_get(self) -> list[PricePoint]:
@@ -105,6 +108,8 @@ class PriceSource:
         if self.config.get(CONF_PRICE_TYPE) == PRICE_NORDPOOL:
             for day in (today, tomorrow):
                 await self._nordpool_day(day)
+        elif self.config.get(CONF_PRICE_TYPE) == PRICE_TIBBER:
+            await self._tibber()
         else:
             self._from_sensor()
         points = [p for d in sorted(self._cache) for p in self._cache[d]]
@@ -140,6 +145,36 @@ class PriceSource:
         points = parse_price_list(items, scale=1 / 1000)
         if points:
             self._cache[day] = points
+            self.unit = f"{self.hass.config.currency}/kWh"
+
+    async def _tibber(self) -> None:
+        """Tibber's own service returns total prices (incl. taxes) per home."""
+        today = dt_util.now().date()
+        have_tomorrow = bool(self._cache.get(today + timedelta(days=1)))
+        if self._cache.get(today) and have_tomorrow:
+            return
+        now = dt_util.now()
+        last = self._last_try.get(today)
+        if self._cache.get(today) and last and now - last < timedelta(minutes=15):
+            return
+        self._last_try[today] = now
+        start = dt_util.start_of_local_day()
+        try:
+            resp = await self.hass.services.async_call(
+                "tibber", "get_prices",
+                {"start": start.isoformat(), "end": (start + timedelta(days=2)).isoformat()},
+                blocking=True, return_response=True,
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("Tibber prices not available: %s", err)
+            return
+        homes = (resp or {}).get("prices") or {}
+        items = next(iter(homes.values()), []) if homes else []
+        points = parse_price_list(items)
+        if points:
+            self._cache.clear()
+            for p in points:
+                self._cache.setdefault(p.start.date(), []).append(p)
             self.unit = f"{self.hass.config.currency}/kWh"
 
     def _from_sensor(self) -> None:

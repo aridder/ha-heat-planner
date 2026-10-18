@@ -116,12 +116,18 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if zone_id not in zones:
             cfg = next((z for z in self.zone_configs if z[CONF_ZONE_ID] == zone_id), {})
             mode = cfg.get(CONF_MODE, MODE_SETPOINT)
+            # an accepted AI proposal seeds the schedule and settings of new zones
+            seed = (self.options.get("seeds") or {}).get(zone_id, {})
+            schedule = {str(k): v for k, v in default_schedule(mode).items()}
+            schedule.update({str(k): list(v) for k, v in (seed.get("schedule") or {}).items()})
             zones[zone_id] = {
-                "schedule": {str(k): v for k, v in default_schedule(mode).items()},
+                "schedule": schedule,
                 "overrides": {},
-                "settings": {},
+                "settings": dict(seed.get("settings") or {}),
                 "thermal": asdict(ThermalModel()),
                 "auto": True,
+                "mode": mode,
+                "seed_version": int(self.options.get("seed_version", 0)),
             }
         return zones[zone_id]
 
@@ -192,6 +198,20 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 # schedules mean different things per mode (offsets vs percent)
                 _LOGGER.info("Zone %s changed control type, resetting its schedule", zid)
                 zones.pop(zid)
+            seed_version = int(self.options.get("seed_version", 0))
+            if (
+                zid in zones
+                and zid in (self.options.get("seeds") or {})
+                and zones[zid].get("seed_version", 0) < seed_version
+            ):
+                # a new AI proposal was accepted: start this zone from it, keep what was learned
+                thermal = zones[zid].get("thermal")
+                learned_kw = zones[zid].get("learned_kw")
+                zones.pop(zid)
+                fresh = self.zone_state(zid)
+                fresh["thermal"] = thermal or fresh["thermal"]
+                if learned_kw:
+                    fresh["learned_kw"] = learned_kw
             self.zone_state(zid)["mode"] = mode
         await self._save()
 

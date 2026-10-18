@@ -27,6 +27,7 @@ CONF_WEATHER: Final = "weather_entity"
 
 PRICE_NORDPOOL: Final = "nordpool"
 PRICE_SENSOR: Final = "sensor"
+PRICE_TIBBER: Final = "tibber"
 
 # Zones (stored in entry.options["zones"])
 CONF_ZONES: Final = "zones"

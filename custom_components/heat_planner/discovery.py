@@ -179,14 +179,15 @@ def describe(hass: HomeAssistant, cands: list[Candidate], lang: str) -> str:
         return "Fant ingen termostater." if nb else "No thermostats found."
     lines = []
     for c in cands:
-        kind = (
-            ("prosent (ingen føler)" if nb else "percent (no sensor)")
-            if c.mode == MODE_PERCENT else (f"{c.comfort:g}° nå" if nb else f"{c.comfort:g}° now")
-        )
+        if c.mode == MODE_PERCENT:
+            kind = ("styres i prosent – termostaten har ingen føler" if nb
+                    else "controlled in percent – the thermostat has no sensor")
+        else:
+            kind = (f"termostat, står på {c.comfort:g}°" if nb else f"thermostat, set to {c.comfort:g}°")
         extra = []
         if c.temperature_sensor:
-            extra.append(("romføler" if nb else "room sensor"))
+            extra.append("romføler funnet" if nb else "room sensor found")
         if c.power_sensor:
-            extra.append(("effektmåler" if nb else "power meter"))
-        lines.append(f"- **{c.name}**: {kind}" + (f" ({', '.join(extra)})" if extra else ""))
+            extra.append("effektmåler funnet" if nb else "power meter found")
+        lines.append(f"- **{c.name}**: {kind}" + (f". {', '.join(extra).capitalize()}." if extra else ""))
     return "\n".join(lines)

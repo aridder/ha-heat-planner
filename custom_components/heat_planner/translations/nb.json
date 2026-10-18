@@ -3,24 +3,19 @@
     "step": {
       "user": {
         "title": "Heat Planner",
-        "description": "Planlegg oppvarmingen etter strømpris og hvem som er hjemme.",
+        "description": "Heat Planner planlegger oppvarmingen etter strømpris og hvem som er hjemme. Den trenger tre ting:\n\n{summary}\n\nAlt under er fylt ut for deg – sjekk og trykk Send.",
         "data": {
           "name": "Navn",
-          "price_type": "Prisskilde",
-          "presence_entities": "Tilstedeværelse (personer/sporere)",
-          "weather_entity": "Vær (prognose for utetemperatur)",
-          "price_extra": "Fast kostnad per kWh (nettleie o.l.)"
+          "price_source": "Strømpris",
+          "presence_entities": "Hvem som bor her",
+          "weather_entity": "Værvarsel",
+          "price_extra": "Nettleie og avgifter per kWh"
         },
         "data_description": {
-          "presence_entities": "Når ingen av disse er hjemme, senkes sonene fram til oppvarmingstidspunktet.",
-          "price_extra": "Brukes bare i kostnadsestimater. Planleggingen bruker spotpris."
-        }
-      },
-      "nordpool": {
-        "title": "Nord Pool",
-        "data": {
-          "nordpool_entry": "Nord Pool",
-          "nordpool_area": "Prisområde"
+          "price_source": "Spotprisen avgjør når det lønner seg å varme. Nord Pool er gratis og krever ingen konto. Tibber-kunder kan bruke Tibber.",
+          "presence_entities": "Når ingen av dem er hjemme, senkes varmen fram til ettermiddagen. Krever Home Assistant-appen på telefonen.",
+          "weather_entity": "Utetemperaturen gjør forventet romtemperatur mer presis.",
+          "price_extra": "Brukes bare til å anslå kostnad. Rundt 0,45 kr i Norge (energiledd i nettleien + elavgift inkl. mva). Bruk 0 hvis prisskilden allerede inkluderer dette."
         }
       },
       "price_sensor": {
@@ -30,11 +25,12 @@
         },
         "data_description": {
           "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
-        }
+        },
+        "description": "Velg en sensor som har dagens priser i attributtene, for eksempel fra Nordpool (HACS), ENTSO-e eller Energi Data Service."
       },
       "house": {
         "title": "Om huset",
-        "description": "En grov beskrivelse gir en god startmodell for hvor fort rommene varmes opp og kjøles ned. Den forbedres med historikken din hvis du tillater det.",
+        "description": "Grove svar holder – standardvalgene passer de fleste. Dette gir hvert rom en startmodell for hvor fort det varmes og kjøles; historikken gjør den presis senere.",
         "data": {
           "house_type": "Boligtype",
           "insulation": "Isolasjon",
@@ -58,10 +54,62 @@
         "data": {
           "use_history": "Bruk historikk til å lære"
         }
+      },
+      "setup_method": {
+        "title": "Hvordan vil du sette opp rommene?",
+        "description": "En AI-assistent kan gjøre en kort beskrivelse av hverdagen deres om til døgnkurver og innstillinger for hvert rom. Du ser forslaget før noe tas i bruk.",
+        "menu_options": {
+          "ai_auto": "La AI sette opp for meg (bruker AI-en som allerede er i Home Assistant)",
+          "ai_copy": "Bruk Claude eller ChatGPT selv (kopier og lim inn)",
+          "zones": "Velg rom selv med fornuftige standardvalg"
+        }
+      },
+      "ai_auto": {
+        "title": "Fortell om hverdagen deres",
+        "description": "Heat Planner sender dette, beskrivelsen av huset og listen over termostater (ingen historikk, ingen navn på personer) til AI-en du velger.",
+        "data": {
+          "routine": "Hverdagen deres",
+          "ai_entity": "AI"
+        },
+        "data_description": {
+          "routine": "Beskriv hverdagen med egne ord – når dere står opp, drar, kommer hjem og legger dere, hverdager og helg, hvem som sover hvor, rom dere vil ha ekstra varme eller kjølige."
+        }
+      },
+      "ai_copy": {
+        "title": "Fortell om hverdagen deres",
+        "description": "Deretter får du en ferdig tekst du limer inn i Claude (claude.ai) eller ChatGPT.",
+        "data": {
+          "routine": "Hverdagen deres"
+        },
+        "data_description": {
+          "routine": "Beskriv hverdagen med egne ord – når dere står opp, drar, kommer hjem og legger dere, hverdager og helg, hvem som sover hvor, rom dere vil ha ekstra varme eller kjølige."
+        }
+      },
+      "ai_paste": {
+        "title": "Kopier, lim inn, lim tilbake",
+        "description": "1. Kopier all teksten i den første boksen.\n2. Lim den inn i en ny samtale i Claude eller ChatGPT.\n3. Lim hele svaret inn i den andre boksen og trykk Send.",
+        "data": {
+          "prompt": "Tekst til AI-en",
+          "answer": "Svaret fra AI-en"
+        }
+      },
+      "ai_review": {
+        "title": "Forslaget fra AI-en",
+        "description": "{proposal}\n\nAlt kan endres senere i Heat Planner-kortet.",
+        "data": {
+          "accept": "Bruk dette forslaget"
+        },
+        "data_description": {
+          "accept": "Slå av for å velge rom selv i stedet."
+        }
       }
     },
-    "abort": {
-      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp. Legg den til først, eller velg en prissensor."
+    "abort": {},
+    "error": {
+      "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
+      "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
+      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, også tegnene { og }.",
+      "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen."
     }
   },
   "options": {
@@ -69,6 +117,7 @@
       "init": {
         "title": "Heat Planner",
         "menu_options": {
+          "assistant": "Sett opp med AI",
           "discover": "Finn termostater",
           "add_zone": "Legg til sone manuelt",
           "edit_zone": "Endre sone",
@@ -126,23 +175,19 @@
         }
       },
       "general": {
-        "title": "Pris og tilstedeværelse",
+        "title": "Heat Planner",
+        "description": "{summary}",
         "data": {
-          "price_type": "Prisskilde",
-          "presence_entities": "Tilstedeværelse (personer/sporere)",
-          "weather_entity": "Vær (prognose for utetemperatur)",
-          "price_extra": "Fast kostnad per kWh (nettleie o.l.)"
+          "price_source": "Strømpris",
+          "presence_entities": "Hvem som bor her",
+          "weather_entity": "Værvarsel",
+          "price_extra": "Nettleie og avgifter per kWh"
         },
         "data_description": {
-          "presence_entities": "Når ingen av disse er hjemme, senkes sonene fram til oppvarmingstidspunktet.",
-          "price_extra": "Brukes bare i kostnadsestimater. Planleggingen bruker spotpris."
-        }
-      },
-      "nordpool": {
-        "title": "Nord Pool",
-        "data": {
-          "nordpool_entry": "Nord Pool",
-          "nordpool_area": "Prisområde"
+          "price_source": "Spotprisen avgjør når det lønner seg å varme. Nord Pool er gratis og krever ingen konto. Tibber-kunder kan bruke Tibber.",
+          "presence_entities": "Når ingen av dem er hjemme, senkes varmen fram til ettermiddagen. Krever Home Assistant-appen på telefonen.",
+          "weather_entity": "Utetemperaturen gjør forventet romtemperatur mer presis.",
+          "price_extra": "Brukes bare til å anslå kostnad. Rundt 0,45 kr i Norge (energiledd i nettleien + elavgift inkl. mva). Bruk 0 hvis prisskilden allerede inkluderer dette."
         }
       },
       "price_sensor": {
@@ -152,7 +197,8 @@
         },
         "data_description": {
           "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
-        }
+        },
+        "description": "Velg en sensor som har dagens priser i attributtene, for eksempel fra Nordpool (HACS), ENTSO-e eller Energi Data Service."
       },
       "house": {
         "title": "Om huset",
@@ -180,25 +226,69 @@
         "data": {
           "zones": "Soner"
         }
+      },
+      "ai_auto": {
+        "title": "Fortell om hverdagen deres",
+        "description": "Heat Planner sender dette, beskrivelsen av huset og listen over termostater (ingen historikk, ingen navn på personer) til AI-en du velger.",
+        "data": {
+          "routine": "Hverdagen deres",
+          "ai_entity": "AI"
+        },
+        "data_description": {
+          "routine": "Beskriv hverdagen med egne ord – når dere står opp, drar, kommer hjem og legger dere, hverdager og helg, hvem som sover hvor, rom dere vil ha ekstra varme eller kjølige."
+        }
+      },
+      "ai_copy": {
+        "title": "Fortell om hverdagen deres",
+        "description": "Deretter får du en ferdig tekst du limer inn i Claude (claude.ai) eller ChatGPT.",
+        "data": {
+          "routine": "Hverdagen deres"
+        },
+        "data_description": {
+          "routine": "Beskriv hverdagen med egne ord – når dere står opp, drar, kommer hjem og legger dere, hverdager og helg, hvem som sover hvor, rom dere vil ha ekstra varme eller kjølige."
+        }
+      },
+      "ai_paste": {
+        "title": "Kopier, lim inn, lim tilbake",
+        "description": "1. Kopier all teksten i den første boksen.\n2. Lim den inn i en ny samtale i Claude eller ChatGPT.\n3. Lim hele svaret inn i den andre boksen og trykk Send.",
+        "data": {
+          "prompt": "Tekst til AI-en",
+          "answer": "Svaret fra AI-en"
+        }
+      },
+      "ai_review": {
+        "title": "Forslaget fra AI-en",
+        "description": "{proposal}\n\nAlt kan endres senere i Heat Planner-kortet.",
+        "data": {
+          "accept": "Bruk dette forslaget"
+        },
+        "data_description": {
+          "accept": "Slå av for å velge rom selv i stedet."
+        }
+      },
+      "assistant": {
+        "title": "Sett opp med AI",
+        "description": "Erstatter døgnkurvene og innstillingene for rommene. Det som er lært om hvert rom, beholdes.",
+        "menu_options": {
+          "ai_auto": "La AI sette opp for meg (bruker AI-en som allerede er i Home Assistant)",
+          "ai_copy": "Bruk Claude eller ChatGPT selv (kopier og lim inn)"
+        }
       }
     },
     "error": {
       "climate_required": "Velg en termostat for styring med temperatur.",
       "number_required": "Velg en prosent-entitet for styring med prosent.",
-      "duplicate": "Det finnes allerede en sone med dette navnet."
+      "duplicate": "Det finnes allerede en sone med dette navnet.",
+      "nordpool_failed": "Klarte ikke å sette opp Nord Pool automatisk. Sjekk nettforbindelsen, eller legg til Nord Pool under Enheter og tjenester.",
+      "ai_failed": "AI-en svarte ikke. Sjekk AI-integrasjonen, eller bruk kopier og lim inn i stedet.",
+      "ai_invalid": "Klarte ikke å lese svaret. Lim inn hele svaret, også tegnene { og }.",
+      "ai_no_zones": "Svaret inneholdt ingen av termostatene som ble funnet. Prøv igjen."
     },
     "abort": {
-      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp.",
       "nothing_new": "Fant ingen nye termostater."
     }
   },
   "selector": {
-    "price_type": {
-      "options": {
-        "nordpool": "Nord Pool",
-        "sensor": "Prissensor"
-      }
-    },
     "mode": {
       "options": {
         "setpoint": "Temperatur (termostat)",

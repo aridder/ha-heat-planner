@@ -59,7 +59,7 @@ async def test_discover_setpoint_percent_and_vehicle(hass: HomeAssistant) -> Non
     assert b.mode == "percent" and b.number_entity == "number.bad_pi_heating_demand"
     assert b.temperature_sensor == "sensor.bad_temp"
     text = describe(hass, cands, "nb")
-    assert "**Bad**: prosent" in text and "effektmåler" in text
+    assert "**Bad**: styres i prosent" in text and "Effektmåler funnet" in text
     # already configured thermostats are skipped
     assert [c.climate_entity for c in discover(hass, {"climate.bad"})] == ["climate.gulv_stue"]
 

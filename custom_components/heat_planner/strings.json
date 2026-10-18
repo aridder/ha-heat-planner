@@ -3,24 +3,19 @@
     "step": {
       "user": {
         "title": "Heat Planner",
-        "description": "Plan heating around electricity prices and presence.",
+        "description": "Heat Planner plans heating around electricity prices and who is home. It needs three things:\n\n{summary}\n\nEverything below is filled in for you – check it and press Submit.",
         "data": {
           "name": "Name",
-          "price_type": "Price source",
-          "presence_entities": "Presence (people/trackers)",
-          "weather_entity": "Weather (outdoor temperature forecast)",
-          "price_extra": "Fixed cost per kWh (grid tariff etc.)"
+          "price_source": "Electricity price",
+          "presence_entities": "Who lives here",
+          "weather_entity": "Weather forecast",
+          "price_extra": "Grid tariff and fees per kWh"
         },
         "data_description": {
-          "presence_entities": "When none of these are home, zones are lowered until the warm-up hour.",
-          "price_extra": "Only used for cost estimates. Planning uses spot prices."
-        }
-      },
-      "nordpool": {
-        "title": "Nord Pool",
-        "data": {
-          "nordpool_entry": "Nord Pool",
-          "nordpool_area": "Price area"
+          "price_source": "Spot prices decide when it pays to heat. Nord Pool is free and needs no account; Tibber customers can use Tibber.",
+          "presence_entities": "When none of them are home, the heat is lowered until the afternoon. Needs the Home Assistant app on each phone.",
+          "weather_entity": "The outdoor temperature makes the expected room temperature more accurate.",
+          "price_extra": "Only used to estimate cost. Around 0.45 kr in Norway (grid energy charge + electricity tax incl. VAT). Use 0 with Tibber if it already includes this."
         }
       },
       "price_sensor": {
@@ -30,11 +25,12 @@
         },
         "data_description": {
           "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
-        }
+        },
+        "description": "Choose a sensor that has today's prices in its attributes, e.g. from Nordpool (HACS), ENTSO-e or Energi Data Service."
       },
       "house": {
         "title": "About your home",
-        "description": "A rough description gives a good starting model for how fast rooms heat and cool. It is refined from your history if you allow it.",
+        "description": "Rough answers are fine – the defaults work for most homes. This gives each room a starting model for how fast it heats and cools; history makes it precise later.",
         "data": {
           "house_type": "Type of home",
           "insulation": "Insulation",
@@ -58,10 +54,62 @@
         "data": {
           "use_history": "Use history to learn"
         }
+      },
+      "setup_method": {
+        "title": "How do you want to set up the rooms?",
+        "description": "An AI assistant can turn a short description of your everyday life into day curves and settings for every room. You review the result before anything is used.",
+        "menu_options": {
+          "ai_auto": "Let AI set it up (uses the AI already in Home Assistant)",
+          "ai_copy": "Use Claude or ChatGPT myself (copy and paste)",
+          "zones": "Pick rooms myself with sensible defaults"
+        }
+      },
+      "ai_auto": {
+        "title": "Tell us about your everyday life",
+        "description": "Heat Planner sends this, your home description and the list of thermostats (no history, no names of people) to the AI you choose.",
+        "data": {
+          "routine": "Your everyday life",
+          "ai_entity": "AI"
+        },
+        "data_description": {
+          "routine": "Describe your everyday life in your own words – when you get up, leave, come home and go to bed, weekdays and weekends, who sleeps where, rooms you want extra warm or cool."
+        }
+      },
+      "ai_copy": {
+        "title": "Tell us about your everyday life",
+        "description": "Next you get a ready-made text to paste into Claude (claude.ai) or ChatGPT.",
+        "data": {
+          "routine": "Your everyday life"
+        },
+        "data_description": {
+          "routine": "Describe your everyday life in your own words – when you get up, leave, come home and go to bed, weekdays and weekends, who sleeps where, rooms you want extra warm or cool."
+        }
+      },
+      "ai_paste": {
+        "title": "Copy, paste, paste back",
+        "description": "1. Copy all the text in the first box.\n2. Paste it into a new chat in Claude or ChatGPT.\n3. Paste the whole answer into the second box and press Submit.",
+        "data": {
+          "prompt": "Text for the AI",
+          "answer": "The AI's answer"
+        }
+      },
+      "ai_review": {
+        "title": "The AI's proposal",
+        "description": "{proposal}\n\nYou can change everything later in the Heat Planner card.",
+        "data": {
+          "accept": "Use this proposal"
+        },
+        "data_description": {
+          "accept": "Turn off to pick rooms yourself instead."
+        }
       }
     },
-    "abort": {
-      "no_nordpool": "The Nord Pool integration is not set up. Add it first or choose a price sensor."
+    "abort": {},
+    "error": {
+      "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
+      "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
+      "ai_invalid": "Could not read the answer. Paste the whole answer, including the { and } characters.",
+      "ai_no_zones": "The answer did not contain any of the thermostats found. Try again."
     }
   },
   "options": {
@@ -69,6 +117,7 @@
       "init": {
         "title": "Heat Planner",
         "menu_options": {
+          "assistant": "Set up with AI",
           "discover": "Find thermostats",
           "add_zone": "Add zone manually",
           "edit_zone": "Edit zone",
@@ -126,23 +175,19 @@
         }
       },
       "general": {
-        "title": "Price & presence",
+        "title": "Heat Planner",
+        "description": "{summary}",
         "data": {
-          "price_type": "Price source",
-          "presence_entities": "Presence (people/trackers)",
-          "weather_entity": "Weather (outdoor temperature forecast)",
-          "price_extra": "Fixed cost per kWh (grid tariff etc.)"
+          "price_source": "Electricity price",
+          "presence_entities": "Who lives here",
+          "weather_entity": "Weather forecast",
+          "price_extra": "Grid tariff and fees per kWh"
         },
         "data_description": {
-          "presence_entities": "When none of these are home, zones are lowered until the warm-up hour.",
-          "price_extra": "Only used for cost estimates. Planning uses spot prices."
-        }
-      },
-      "nordpool": {
-        "title": "Nord Pool",
-        "data": {
-          "nordpool_entry": "Nord Pool",
-          "nordpool_area": "Price area"
+          "price_source": "Spot prices decide when it pays to heat. Nord Pool is free and needs no account; Tibber customers can use Tibber.",
+          "presence_entities": "When none of them are home, the heat is lowered until the afternoon. Needs the Home Assistant app on each phone.",
+          "weather_entity": "The outdoor temperature makes the expected room temperature more accurate.",
+          "price_extra": "Only used to estimate cost. Around 0.45 kr in Norway (grid energy charge + electricity tax incl. VAT). Use 0 with Tibber if it already includes this."
         }
       },
       "price_sensor": {
@@ -152,7 +197,8 @@
         },
         "data_description": {
           "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
-        }
+        },
+        "description": "Choose a sensor that has today's prices in its attributes, e.g. from Nordpool (HACS), ENTSO-e or Energi Data Service."
       },
       "house": {
         "title": "About your home",
@@ -180,25 +226,69 @@
         "data": {
           "zones": "Zones"
         }
+      },
+      "ai_auto": {
+        "title": "Tell us about your everyday life",
+        "description": "Heat Planner sends this, your home description and the list of thermostats (no history, no names of people) to the AI you choose.",
+        "data": {
+          "routine": "Your everyday life",
+          "ai_entity": "AI"
+        },
+        "data_description": {
+          "routine": "Describe your everyday life in your own words – when you get up, leave, come home and go to bed, weekdays and weekends, who sleeps where, rooms you want extra warm or cool."
+        }
+      },
+      "ai_copy": {
+        "title": "Tell us about your everyday life",
+        "description": "Next you get a ready-made text to paste into Claude (claude.ai) or ChatGPT.",
+        "data": {
+          "routine": "Your everyday life"
+        },
+        "data_description": {
+          "routine": "Describe your everyday life in your own words – when you get up, leave, come home and go to bed, weekdays and weekends, who sleeps where, rooms you want extra warm or cool."
+        }
+      },
+      "ai_paste": {
+        "title": "Copy, paste, paste back",
+        "description": "1. Copy all the text in the first box.\n2. Paste it into a new chat in Claude or ChatGPT.\n3. Paste the whole answer into the second box and press Submit.",
+        "data": {
+          "prompt": "Text for the AI",
+          "answer": "The AI's answer"
+        }
+      },
+      "ai_review": {
+        "title": "The AI's proposal",
+        "description": "{proposal}\n\nYou can change everything later in the Heat Planner card.",
+        "data": {
+          "accept": "Use this proposal"
+        },
+        "data_description": {
+          "accept": "Turn off to pick rooms yourself instead."
+        }
+      },
+      "assistant": {
+        "title": "Set up with AI",
+        "description": "Replaces the day curves and settings of the rooms. What has been learned about each room is kept.",
+        "menu_options": {
+          "ai_auto": "Let AI set it up (uses the AI already in Home Assistant)",
+          "ai_copy": "Use Claude or ChatGPT myself (copy and paste)"
+        }
       }
     },
     "error": {
       "climate_required": "Choose a thermostat for setpoint control.",
       "number_required": "Choose a percent entity for percent control.",
-      "duplicate": "A zone with this name already exists."
+      "duplicate": "A zone with this name already exists.",
+      "nordpool_failed": "Could not set up Nord Pool automatically. Check the internet connection, or add Nord Pool under Devices & services.",
+      "ai_failed": "The AI did not answer. Check the AI integration, or use copy and paste instead.",
+      "ai_invalid": "Could not read the answer. Paste the whole answer, including the { and } characters.",
+      "ai_no_zones": "The answer did not contain any of the thermostats found. Try again."
     },
     "abort": {
-      "no_nordpool": "The Nord Pool integration is not set up.",
       "nothing_new": "No new thermostats found."
     }
   },
   "selector": {
-    "price_type": {
-      "options": {
-        "nordpool": "Nord Pool",
-        "sensor": "Price sensor"
-      }
-    },
     "mode": {
       "options": {
         "setpoint": "Temperature (thermostat)",

@@ -35,8 +35,13 @@ Prices only shift *when* heat is used; comfort stays where you put it. Choose a 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/aridder/ha-heat-planner` as *Integration*.
 2. Install **Heat Planner** and restart Home Assistant.
 3. **Settings → Devices & services → Add integration → Heat Planner.** Setup walks you through:
-   - **Price & presence** – price source, who counts as "home", a weather entity.
+   - **Price & presence** – a checklist shows what was found. No price source? Heat Planner sets up Nord Pool for you (free, no account, price area guessed from your address). Tibber and price sensors from Nordpool (HACS), ENTSO-e or Energi Data Service are detected automatically. No weather forecast? Met.no is added for you.
    - **About your home** – type of home, insulation, heated area and heating (electric or water-based floor heating, panel heaters, heat pumps, district heating, wood stove). This gives each room a sensible starting model.
+   - **Set up the rooms** – three ways:
+     - **Let AI set it up**: if Home Assistant already has an AI (Claude, ChatGPT, Gemini … via AI Task), describe your everyday life in your own words and get day curves and settings for every room.
+     - **Use Claude or ChatGPT yourself**: copy a ready-made text into any chat assistant and paste the answer back.
+     - **Pick rooms yourself** with sensible defaults.
+     You always see the proposal before anything is used. Only the house description, your text and the list of thermostats are sent – no history and no names of people. Every answer is validated and clamped to safe limits.
    - **Found in your home** – Heat Planner lists the thermostats it finds (vehicles and other non-room climate entities are skipped), the room sensor and power meter next to each, and whether it should be controlled by temperature or, for thermostats without a sensor, by percent. Pick the ones to control.
    - **Learn from history** – with your permission it reads the last 30 days from Home Assistant's own recorder to learn how fast each room heats and cools and how much power each heater draws. Nothing leaves your Home Assistant. You can turn this off later.
 4. Later: **Configure → Find thermostats** picks up new ones, **About your home** and **Learn from history** can be changed at any time.

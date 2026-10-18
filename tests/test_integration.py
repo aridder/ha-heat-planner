@@ -66,14 +66,15 @@ async def test_config_flow_with_price_sensor(hass: HomeAssistant, setup_states) 
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     assert result["type"] is FlowResultType.FORM
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"name": "Hjem", "price_type": "sensor", "presence_entities": ["person.a"], "price_extra": 0.4}
+        result["flow_id"], {"name": "Hjem", "price_source": f"sensor:{PRICE_SENSOR}", "presence_entities": ["person.a"], "weather_entity": "weather.home", "price_extra": 0.4}
     )
     assert result["step_id"] == "house"
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"house_type": "terraced", "insulation": "normal", "heating_sources": ["floor_electric"], "heated_area": 120}
     )
-    assert result["step_id"] == "price_sensor"
-    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"price_sensor": PRICE_SENSOR})
+    assert result["type"] is FlowResultType.MENU and result["step_id"] == "setup_method"
+    assert result["menu_options"] == ["ai_copy", "zones"]  # no AI in HA
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "zones"})
     assert result["step_id"] == "zones"
     assert "Stue" in result["description_placeholders"]["found"] or "climate.stue" in result["description_placeholders"]["found"].lower() or result["description_placeholders"]["found"]
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"zones": ["stue"]})
