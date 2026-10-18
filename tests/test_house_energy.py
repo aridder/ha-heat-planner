@@ -2,12 +2,11 @@
 
 from datetime import timedelta
 
-import pytest
-
 from homeassistant.components.recorder.models import StatisticData, StatisticMeanType, StatisticMetaData
 from homeassistant.components.recorder.statistics import async_add_external_statistics
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
+import pytest
 from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.heat_planner.energy import async_house_hourly_kwh
@@ -15,7 +14,7 @@ from custom_components.heat_planner.energy import async_house_hourly_kwh
 
 @pytest.fixture(autouse=True)
 def auto_enable_custom_integrations(recorder_mock, enable_custom_integrations):
-    yield
+    return
 
 
 async def test_tibber_energy_statistic_gives_the_month_peaks(hass: HomeAssistant) -> None:

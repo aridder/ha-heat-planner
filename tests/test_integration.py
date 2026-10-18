@@ -178,7 +178,10 @@ async def test_websocket_get_preview_save(hass: HomeAssistant, setup_states, has
     await ws.send_json({"id": 2, "type": "heat_planner/preview", "entry_id": entry.entry_id, "zone_id": "stue", "values": values})
     res = await ws.receive_json()
     assert res["success"]
-    assert all(h["scheduled"] == 24.0 for h in res["result"]["hours"][:2])
+    # the edited curve is today's; late in the evening the second hour is already tomorrow
+    today = dt_util.now().date().isoformat()
+    todays = [h for h in res["result"]["hours"] if h["start"][:10] == today]
+    assert todays and all(h["scheduled"] == 24.0 for h in todays)
 
     await ws.send_json({"id": 3, "type": "heat_planner/save", "entry_id": entry.entry_id, "zone_id": "stue",
                         "scope": "weekdays", "values": values})

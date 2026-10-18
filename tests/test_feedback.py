@@ -90,7 +90,7 @@ def test_unknown_kind():
 
 
 def test_message_says_when_the_daily_limit_stops_a_change() -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from custom_components.heat_planner.feedback import record_feedback
 
@@ -98,7 +98,7 @@ def test_message_says_when_the_daily_limit_stops_a_change() -> None:
     before = {"comfort": 21.0, "price_shift": 0.0, "preheat": 0.0, "away_offset": -4.0,
               "safety_min_temp": 18.0, "max_value": 28.0, "min_value": 5.0}
     msg = ""
-    t = datetime(2026, 10, 19, 9, tzinfo=timezone.utc)
+    t = datetime(2026, 10, 19, 9, tzinfo=UTC)
     for i in range(6):
         msg = record_feedback(st, before, "too_cold", "normal", today="2026-10-19", lang="en", now=t + timedelta(minutes=15 * i))
         before = {**before, "comfort": st["settings"].get("comfort", before["comfort"])}
