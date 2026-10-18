@@ -314,6 +314,7 @@ def build_plan(
     kw_cap: dict[datetime, float] | None = None,
     optimizer_weights=None,
     adjust=None,
+    initial_off_run: int = 0,
 ) -> Plan:
     """Build an hourly plan starting at the hour containing ``start``.
 
@@ -325,6 +326,8 @@ def build_plan(
     ``prices`` must be hourly (see :func:`hourly_prices`) and keyed by
     timezone-aware local datetimes. ``away_now`` only affects the first hour
     and the following hours until someone is expected home (``away_until_hour``).
+    ``initial_off_run`` is how many hours heating has already been off right
+    before ``start``; it counts toward ``max_off_hours``.
     """
     start = start.replace(minute=0, second=0, microsecond=0)
     levels = classify_prices(prices, rules)
@@ -411,7 +414,7 @@ def build_plan(
             )
         )
 
-    _cap_off_runs(zone, slots)
+    _cap_off_runs(zone, slots, initial_off_run)
     refs = [comfort_reference(zone, s) for s in slots]
     used = "rules"
     if method == "optimize" and room_temp is not None:
@@ -421,6 +424,7 @@ def build_plan(
             slots = optimize_zone(
                 zone, slots, prices, room_temp, outdoor or {}, outdoor_default,
                 solar=solar, kw_cap=kw_cap, weights=optimizer_weights,
+                initial_off_run=initial_off_run,
             )
             used = "optimize"
         except Exception:  # noqa: BLE001 - never lose the plan: keep the rules result
@@ -532,14 +536,20 @@ def explain_savings(plan: Plan, lang: str = "nb", currency: str | None = None) -
     return ", ".join(parts)
 
 
-def _cap_off_runs(zone: ZoneConfig, slots: list[PlanHour]) -> None:
-    """Never leave heating off for more than ``max_off_hours`` in a row."""
-    run = 0
+def _cap_off_runs(zone: ZoneConfig, slots: list[PlanHour], initial_off_run: int = 0) -> None:
+    """Never leave heating off for more than ``max_off_hours`` in a row.
+
+    ``initial_off_run`` hours of OFF right before the first slot count too. The
+    replacement setpoint is never below ``safety_min_temp`` (unless the schedule is).
+    """
+    run = max(0, int(initial_off_run))
     for s in slots:
         if s.target is None:
             run += 1
             if run > zone.max_off_hours:
                 t = _clamp(s.scheduled - zone.price_shift, zone.min_value, zone.max_value)
+                if not zone.is_percent:
+                    t = max(t, min(s.scheduled, zone.safety_min_temp))
                 s.target = round(t) if zone.is_percent else round(t * 2) / 2
                 s.mode = "save"
                 s.reasons = [r for r in s.reasons if r != R_EXTREME_OFF] + [R_EXPENSIVE]

@@ -9,10 +9,23 @@ dynamic programming over a discretised room-temperature grid. The objective is
 using the zone's own room model (``ThermalModel.step``). Pre-heating is only
 chosen when the model says the extra energy (including the extra losses of a
 warmer room) is cheaper than heating in the expensive hours.
+
+The action set honours the zone's sliders: an hour is lowered at most
+``price_shift * aggressiveness`` below its comfort reference and raised at most
+``2 * preheat * min(aggressiveness, 1)`` above it; OFF is only offered in
+"extreme" hours (``extreme_off``, ``max_off_hours``), and a lowered setpoint is
+never below ``safety_min_temp``.
+
+Dead time (``ThermalModel.lag_hours``): like :func:`planner._simulate`, a
+thermostat is assumed to control on the temperature the room will have once
+the heat already queued has arrived. The DP state is therefore the room
+temperature ``lag`` hours ahead: an action is paid for in its own hour, but
+its comfort (reference, weight, safety floor) is judged ``lag`` hours later.
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -36,8 +49,9 @@ R_OPTIMIZED = "optimized"
 SUBSTEPS = 4
 _DT = 1.0 / SUBSTEPS
 _INF = float("inf")
-_SETPOINT_DELTAS = (-2.0, -1.0, -0.5, 0.0, 0.5, 1.0, 2.0)
-_PERCENT_DELTAS = (-30.0, -20.0, -10.0, 0.0, 10.0, 20.0, 30.0)
+# candidate step sizes; the zone's own bound (rounded down to the grid) is added
+_SETPOINT_STEPS = (0.5, 1.0, 2.0, 3.0, 4.0)
+_PERCENT_STEPS = (10.0, 20.0, 30.0, 40.0, 60.0)
 _MAX_BINS = 80
 
 
@@ -59,6 +73,7 @@ class OptimizerWeights:
     min_gain: float = 0.02  # reheat units an hour must gain before leaving the schedule
     night_from: int = 23
     night_to: int = 6
+    off_levels: tuple[str, ...] = (LEVEL_EXTREME,)  # price levels where OFF may be chosen
 
 
 @dataclass
@@ -71,7 +86,8 @@ class _Hour:
     sol: float
     price: float
     ref: float  # comfort reference (setpoint zones: °C; percent zones: action centre)
-    ref_temps: tuple[float, ...]  # reference temperature per substep
+    ref_temps: tuple[float, ...]  # reference temperature per substep (lag-shifted)
+    w_sub: tuple[float, ...]  # comfort weight per substep (lag-shifted)
     w_comfort: float
     protected: bool
     actions: list[float | None]
@@ -88,8 +104,14 @@ def optimize_zone(
     solar: dict[datetime, float] | None = None,
     kw_cap: dict[datetime, float] | None = None,
     weights: OptimizerWeights | None = None,
+    *,
+    initial_off_run: int = 0,
 ) -> list[PlanHour]:
     """Return new slots with optimised targets (simulation fields are not filled).
+
+    ``initial_off_run`` is the number of hours heating has already been off
+    right before the first slot (plans are rebuilt often; the ``max_off_hours``
+    run must not restart at every rebuild).
 
     Falls back to ``slots`` unchanged when the room temperature is unknown,
     there are no prices, or ``price_aggressiveness`` is 0.
@@ -111,24 +133,32 @@ def optimize_zone(
     percent = zone.is_percent
     max_off = max(0, int(zone.max_off_hours)) if zone.extreme_off else 0
 
+    lag = max(0.0, float(getattr(model, "lag_hours", 0.0) or 0.0))
+    n_lag = int(round(lag / _DT))  # substeps, as in planner._simulate
+    lag_h = int(round(lag))
+    shift_max = max(0.0, zone.price_shift * agg)
+    raise_max = max(0.0, 2.0 * zone.preheat * min(agg, 1.0))
+    floor = None if percent else zone.safety_min_temp
+    n = len(slots)
+    prot = [is_protected(zone, s.start) for s in slots]
+
     hours: list[_Hour] = []
-    for s in slots:
+    for i, s in enumerate(slots):
         t_out = outdoor.get(s.start, outdoor_default)
         sol = float(solar.get(s.start, 0.0) or 0.0)
         a, b0, bd, affine = _affine(model, t_out, sol)
-        protected = is_protected(zone, s.start)
+        protected = prot[i]
+        # with a lag, lowering now cools the room lag hours later: protect that too
+        no_lower = protected or prot[min(n - 1, i + lag_h)]
         away = R_AWAY in s.reasons
         ref = comfort_reference(zone, s)
-        deltas = _PERCENT_DELTAS if percent else _SETPOINT_DELTAS
-        acts: list[float | None] = []
-        for d in deltas:
-            if protected and d < 0:
-                continue  # protected window: never lower
-            v = min(zone.max_value, max(zone.min_value, ref + d))
-            v = float(round(v)) if percent else round(v * 2) / 2
-            if v not in acts:
-                acts.append(v)
-        if max_off and not protected:
+        acts = _actions(zone, ref, shift_max, raise_max, no_lower, floor)
+        if (
+            max_off
+            and not no_lower
+            and s.level in w.off_levels
+            and (floor is None or ref >= floor)
+        ):
             acts.append(None)
         night = (
             s.start.hour >= w.night_from or s.start.hour < w.night_to
@@ -146,7 +176,7 @@ def optimize_zone(
             _Hour(
                 out=t_out, a=a, b0=b0, bd=bd, affine=affine, sol=sol,
                 price=mean_price if price is None else price,
-                ref=ref, ref_temps=(), w_comfort=w.comfort * mult * unit / agg,
+                ref=ref, ref_temps=(), w_sub=(), w_comfort=w.comfort * mult * unit / agg,
                 protected=protected, actions=acts, cap=kw_cap.get(s.start),
             )
         )
@@ -155,15 +185,23 @@ def optimize_zone(
     # on the unmodified schedule (a setpoint cannot be reached instantly, and we
     # must not "buy" comfort the schedule itself would not give).
     temp = room_temp
+    ref_flat: list[float] = []
+    w_flat: list[float] = []
     for h in hours:
-        refs = []
         for _ in range(SUBSTEPS):
             temp = _sub(model, h, temp, _duty(model, h, temp, h.ref, percent))
-            refs.append(temp)
-        h.ref_temps = tuple(refs)
+            ref_flat.append(temp)
+            w_flat.append(h.w_comfort)
+    # Dead time: the state is the room temperature n_lag substeps ahead, so the
+    # action of substep g is judged against the reference of substep g + n_lag.
+    last = len(ref_flat) - 1
+    for i, h in enumerate(hours):
+        idx = [min(last, i * SUBSTEPS + j + n_lag) for j in range(SUBSTEPS)]
+        h.ref_temps = tuple(ref_flat[g] for g in idx)
+        h.w_sub = tuple(w_flat[g] for g in idx)
 
     # Temperature grid.
-    all_refs = [r for h in hours for r in h.ref_temps]
+    all_refs = ref_flat
     lo = min(room_temp, min(all_refs), zone.safety_min_temp) - 3.0
     hi = max(room_temp, max(all_refs)) + 3.0
     t_off, t_on, lo_reach, hi_reach = room_temp, room_temp, room_temp, room_temp
@@ -179,7 +217,7 @@ def optimize_zone(
     nb = int((hi - lo) / step) + 2
     grid = [lo + i * step for i in range(nb)]
 
-    end_ref = hours[-1].ref_temps[-1]
+    end_ref = ref_flat[-1]
     n_r = max_off + 1
     v_next = [[w.terminal * unit * max(0.0, end_ref - g) for g in grid] for _ in range(n_r)]
 
@@ -225,7 +263,7 @@ def optimize_zone(
     # Forward pass from the actual room temperature.
     out: list[PlanHour] = []
     temp = room_temp
-    run = 0
+    run = min(max(0, int(initial_off_run)), max_off)
     tie = w.min_gain * unit
     for i, (s, h) in enumerate(zip(slots, hours)):
         nxt = values[i + 1] if i + 1 < len(hours) else None
@@ -253,6 +291,50 @@ def optimize_zone(
 
 
 # --------------------------------------------------------------------------- helpers
+
+
+def _actions(
+    zone: ZoneConfig,
+    ref: float,
+    shift_max: float,
+    raise_max: float,
+    no_lower: bool,
+    floor: float | None,
+) -> list[float | None]:
+    """Targets the optimiser may choose for one hour (OFF is added by the caller).
+
+    Lowered at most ``shift_max`` below ``ref`` (never below ``floor``), raised
+    at most ``raise_max`` above it, on a 0.5 °C grid (percent zones: 5/10 points).
+    """
+    percent = zone.is_percent
+    grid = 5.0 if percent else 0.5
+    steps = _PERCENT_STEPS if percent else _SETPOINT_STEPS
+
+    def sizes(bound: float) -> list[float]:
+        top = int(bound / grid + 1e-9) * grid  # bound rounded down to the grid
+        out = [d for d in steps if d <= top + 1e-9]
+        if top > 0 and top not in out:
+            out.append(top)
+        return out
+
+    def snap(v: float) -> float:
+        v = min(zone.max_value, max(zone.min_value, v))
+        return float(round(v)) if percent else round(v * 2) / 2
+
+    base = snap(ref)
+    acts: list[float | None] = [base]
+    if not no_lower:
+        for d in sizes(shift_max):
+            v = snap(ref - d)
+            if floor is not None and v < floor - 1e-9:
+                v = math.ceil(floor * 2 - 1e-9) / 2  # lowest grid value ≥ floor
+            if v < base - 1e-9 and v not in acts:
+                acts.append(v)
+    for d in sizes(raise_max):
+        v = snap(ref + d)
+        if v > base + 1e-9 and v not in acts:
+            acts.append(v)
+    return acts
 
 
 def _affine(model, t_out: float, sol: float) -> tuple[float, float, float, bool]:
@@ -329,13 +411,13 @@ def _hour_cost(
         duty_sum += d
         diff = h.ref_temps[j] - temp
         if diff > 0:
-            deficit += diff * diff
+            deficit += h.w_sub[j] * diff * diff
         else:
             above -= diff
     duty = duty_sum / SUBSTEPS
     kw = duty * zone.heater_kw
     cost = kw * h.price
-    cost += h.w_comfort * deficit * _DT + w.above * unit * above * _DT
+    cost += deficit * _DT + w.above * unit * above * _DT
     if h.cap is not None and kw > h.cap:
         cost += peak_w * (kw - h.cap)
     return cost, temp
