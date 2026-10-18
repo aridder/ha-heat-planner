@@ -278,7 +278,7 @@
 
       moneyH: "Kostnad og besparelse",
       money: [
-        ["Kostnad", (x) => `Forventet strømforbruk × timepris${x ? ` + ${x} i nettleie og avgifter` : ""}.`],
+        ["Kostnad", (x) => `Forventet strømforbruk × det dere faktisk betaler per time${x ? ` (${x})` : ""}.`],
         ["Besparelse", () => "Sammenlignet med den samme døgnkurven uten prisstyring. Det er et anslag, ikke en måling."],
         ["Fastpris?", () => "Har dere fastpris eller Norgespris, er det lite å hente på å flytte forbruk. Sett strategien til «Ignorer» – resten av planen virker som før."],
       ],
@@ -448,7 +448,7 @@
 
       moneyH: "Cost and savings",
       money: [
-        ["Cost", (x) => `Expected energy use × hourly price${x ? ` + ${x} for grid fees and taxes` : ""}.`],
+        ["Cost", (x) => `Expected energy use × what you actually pay each hour${x ? ` (${x})` : ""}.`],
         ["Savings", () => "Compared with the same day curve without price control. It is an estimate, not a measurement."],
         ["Fixed price?", () => "On a fixed-price contract there is little to gain from moving consumption. Set the strategy to “Ignore” – the rest of the plan works as before."],
       ],
@@ -680,7 +680,7 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
         loc, cur,
         zones: d?.zones || [],
         src: d?.price_source,
-        extra: d?.price_extra ? money(d.price_extra) : null,
+        extra: d?.tariff?.label || (d?.price_extra ? money(d.price_extra) : null),
         s: {
           n: r.expensive_hours ?? 3, shift: fmtN(s.price_shift ?? 1, loc), pre: fmtN(s.preheat ?? 1, loc),
           safety: fmtN(s.safety_min_temp ?? 18, loc), pf: String(s.protected_from_hour ?? 13).padStart(2, "0"),

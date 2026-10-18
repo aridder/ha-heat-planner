@@ -1,7 +1,7 @@
 /* Heat Planner card – price & presence aware heating schedules.
  * No build step, no dependencies. Talks to the heat_planner websocket API.
  */
-const VERSION = "0.2.0";
+const VERSION = "0.3.0";
 
 const I18N = {
   en: {
@@ -27,6 +27,7 @@ const I18N = {
       schedule: "Schedule", override: "Changed for this day", away: "Nobody home", expensive: "One of the most expensive hours",
       preheat: "Cheap hour before expensive hours", preheat_extreme: "Storing heat before an extreme price",
       extreme_off: "Extreme price – heating off", protected: "Warm-up window, price ignored",
+      optimized: "Chosen by the optimiser for the lowest cost at the same comfort", peak_limit: "Keeping the monthly peak down (capacity tariff)",
     },
     nowLabel: "now", edit: "Edit day", done: "Done", today: "Today", tomorrow: "Tomorrow",
     days: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
@@ -40,7 +41,7 @@ const I18N = {
     extremeAbs: "Extreme price from", safety: "Never cut off below", away: "Lower when nobody is home", warmFrom: "Warm again from",
     protectFrom: "No price saving from", protectTo: "No price saving until", model: (g, tau, l) => `Room model: heats ${g}°/h, loses half its warmth in ${tau} h${l ? " (learned from history)" : " (from your home description)"}.`,
     power: (kw, src) => `Heater ${kw} kW${src === "measured" ? " (measured)" : src === "estimate" ? " (estimate)" : ""}.`,
-    resume: "Resume plan", manualBadge: "Manual", help: "How it works", closeHelp: "Close help",
+    resume: "Resume plan", manualBadge: "Manual", help: "How it works", optimizeLbl: "Optimise (all rooms)", closeHelp: "Close help",
     fbCold: "Too cold", fbWarm: "Too warm", fbLabel: "How does it feel?", fbFail: "Could not send feedback.",
     cost24: (c, k) => `Next 24 h about ${c} · ${k} kWh.`,
     saves: (s, p) => ` Saves ${s}${p ? ` (${p})` : ""}`,
@@ -78,6 +79,7 @@ const I18N = {
       schedule: "Tidsplan", override: "Endret for denne dagen", away: "Ingen hjemme", expensive: "En av de dyreste timene",
       preheat: "Billig time før dyre timer", preheat_extreme: "Lagrer varme før ekstrempris",
       extreme_off: "Ekstrempris – varmen er av", protected: "Oppvarmingsvindu, prisen ignoreres",
+      optimized: "Valgt av optimereren – lavest kostnad med samme komfort", peak_limit: "Holder månedens effekttopp nede (effekttrinn)",
     },
     nowLabel: "nå", edit: "Endre døgn", done: "Ferdig", today: "I dag", tomorrow: "I morgen",
     days: ["man", "tir", "ons", "tor", "fre", "lør", "søn"],
@@ -91,7 +93,7 @@ const I18N = {
     extremeAbs: "Ekstrempris fra", safety: "Aldri av under", away: "Senk når ingen er hjemme", warmFrom: "Varmt igjen fra kl.",
     protectFrom: "Ingen prissparing fra kl.", protectTo: "Ingen prissparing til kl.", model: (g, tau, l) => `Rommodell: varmes ${g}°/t, mister halve varmen på ${tau} t${l ? " (lært av historikken)" : " (fra beskrivelsen av huset)"}.`,
     power: (kw, src) => `Effekt ${String(kw).replace(".", ",")} kW${src === "measured" ? " (målt)" : src === "estimate" ? " (anslått)" : ""}.`,
-    resume: "Gjenoppta plan", manualBadge: "Manuell", help: "Slik fungerer det", closeHelp: "Lukk hjelpen",
+    resume: "Gjenoppta plan", manualBadge: "Manuell", help: "Slik fungerer det", optimizeLbl: "Optimer (alle rom)", closeHelp: "Lukk hjelpen",
     fbCold: "For kaldt", fbWarm: "For varmt", fbLabel: "Hvordan kjennes det?", fbFail: "Kunne ikke sende tilbakemeldingen.",
     cost24: (c, k) => `Neste 24 t ca. ${c} · ${k} kWh.`,
     saves: (s, p) => ` Sparer ${s}${p ? ` (${p})` : ""}`,
@@ -832,6 +834,7 @@ class HeatPlannerCard extends HTMLElement {
       el("button", { class: "tog", role: "switch", "aria-checked": String(!!on), "aria-label": label, onclick: fn }));
 
     toggle(t.auto, z.auto, () => this._settings(z, { auto: !z.auto }));
+    if (this.entry && "optimize" in this.entry) toggle(t.optimizeLbl, this.entry.optimize, () => this._settings(null, { optimize: !this.entry.optimize }));
     if (!pct) stepper(t.comfort, "comfort", 0.5, 10, 28, (v) => this.fmtT(v, z));
     const ai = STRAT.reduce((b, v, i) => (Math.abs(v - s.price_aggressiveness) < Math.abs(STRAT[b] - s.price_aggressiveness) ? i : b), 0);
     grid.append(el("label", { text: t.strategy }), el("div", { class: "seg", role: "group" },
