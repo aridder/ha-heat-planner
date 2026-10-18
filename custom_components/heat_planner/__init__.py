@@ -17,6 +17,7 @@ from .const import (
     ATTR_ENTRY_ID,
     ATTR_ZONE,
     CARD_URL,
+    HELP_URL,
     DOMAIN,
     PLATFORMS,
     SCOPE_ALL,
@@ -93,10 +94,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from homeassistant.components.frontend import add_extra_js_url
     from homeassistant.components.http import StaticPathConfig
 
-    card = Path(__file__).parent / "frontend" / "heat-planner-card.js"
+    frontend = Path(__file__).parent / "frontend"
     await hass.http.async_register_static_paths(
-        [StaticPathConfig(CARD_URL, str(card), cache_headers=False)]
+        [
+            StaticPathConfig(CARD_URL, str(frontend / "heat-planner-card.js"), cache_headers=False),
+            StaticPathConfig(HELP_URL, str(frontend / "heat-planner-help.js"), cache_headers=False),
+        ]
     )
+    add_extra_js_url(hass, f"{HELP_URL}?v={VERSION}")
     add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
     async_register_websocket(hass)
 

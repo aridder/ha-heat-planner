@@ -1,7 +1,7 @@
 /* Heat Planner card – price & presence aware heating schedules.
  * No build step, no dependencies. Talks to the heat_planner websocket API.
  */
-const VERSION = "0.1.0";
+const VERSION = "0.2.0";
 
 const I18N = {
   en: {
@@ -40,7 +40,7 @@ const I18N = {
     extremeAbs: "Extreme price from", safety: "Never cut off below", away: "Lower when nobody is home", warmFrom: "Warm again from",
     protectFrom: "No price saving from", protectTo: "No price saving until", model: (g, tau, l) => `Room model: heats ${g}°/h, loses half its warmth in ${tau} h${l ? " (learned from history)" : " (from your home description)"}.`,
     power: (kw, src) => `Heater ${kw} kW${src === "measured" ? " (measured)" : src === "estimate" ? " (estimate)" : ""}.`,
-    resume: "Resume plan", manualBadge: "Manual",
+    resume: "Resume plan", manualBadge: "Manual", help: "How it works", closeHelp: "Close help",
   },
   nb: {
     loading: "Henter varmeplan …",
@@ -78,7 +78,7 @@ const I18N = {
     extremeAbs: "Ekstrempris fra", safety: "Aldri av under", away: "Senk når ingen er hjemme", warmFrom: "Varmt igjen fra kl.",
     protectFrom: "Ingen prissparing fra kl.", protectTo: "Ingen prissparing til kl.", model: (g, tau, l) => `Rommodell: varmes ${g}°/t, mister halve varmen på ${tau} t${l ? " (lært av historikken)" : " (fra beskrivelsen av huset)"}.`,
     power: (kw, src) => `Effekt ${String(kw).replace(".", ",")} kW${src === "measured" ? " (målt)" : src === "estimate" ? " (anslått)" : ""}.`,
-    resume: "Gjenoppta plan", manualBadge: "Manuell",
+    resume: "Gjenoppta plan", manualBadge: "Manuell", help: "Slik fungerer det", closeHelp: "Lukk hjelpen",
   },
 };
 
@@ -125,6 +125,9 @@ svg { display:block; width:100%; overflow:visible; }
 .bar { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-top:12px; }
 .cost { color:var(--hp-soft); font-size:13px; }
 button.btn { all:unset; cursor:pointer; font-size:13px; padding:7px 14px; border-radius:999px; border:1px solid var(--hp-line); color:var(--hp-ink); }
+button.btn.ghost { border-color:transparent; color:var(--hp-soft); }
+button.btn.ghost:hover { color:var(--hp-ink); }
+.helpwrap { margin-top:18px; padding-top:6px; border-top:1px solid var(--hp-line); }
 button.btn.primary { background:var(--hp-ink); color:var(--card-background-color, #fff); border-color:var(--hp-ink); }
 button.btn:disabled { opacity:.4; cursor:default; }
 .chips { display:flex; gap:6px; flex-wrap:wrap; }
@@ -354,11 +357,20 @@ class HeatPlannerCard extends HTMLElement {
       const bar = el("div", { class: "bar" },
         el("span", { class: "cost", text: this.costLine(z) }),
         el("div", { class: "row" },
+          customElements.get("heat-planner-help")
+            ? el("button", { class: "btn ghost", text: this._showHelp ? t.closeHelp : t.help, "aria-expanded": String(!!this._showHelp),
+                onclick: () => { this._showHelp = !this._showHelp; this._render(); } })
+            : null,
           z.manual_until ? el("button", { class: "btn", text: t.resume, onclick: () => this._settings(z, {}, true) }) : null,
           el("button", { class: "btn", text: t.edit, onclick: () => this._startEdit(z, this.dateKey(new Date())) })));
       card.append(bar);
     }
     card.append(this._settingsPanel(z));
+    if (this._showHelp && customElements.get("heat-planner-help")) {
+      if (!this._helpEl) this._helpEl = document.createElement("heat-planner-help");
+      this._helpEl.hass = this._hass;
+      card.append(el("div", { class: "helpwrap" }, this._helpEl));
+    }
   }
 
   _legend(z) {

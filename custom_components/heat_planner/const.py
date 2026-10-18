@@ -6,7 +6,7 @@ from datetime import timedelta
 from typing import Final
 
 DOMAIN: Final = "heat_planner"
-VERSION: Final = "0.1.1"
+VERSION: Final = "0.2.0"
 
 PLATFORMS: Final = ["sensor", "switch", "number", "select"]
 
@@ -15,6 +15,7 @@ PLAN_HOURS: Final = 36
 STORAGE_VERSION: Final = 1
 
 CARD_URL: Final = f"/{DOMAIN}_static/heat-planner-card.js"
+HELP_URL: Final = f"/{DOMAIN}_static/heat-planner-help.js"
 
 # Config entry data
 CONF_PRICE_TYPE: Final = "price_type"  # "nordpool" | "sensor"

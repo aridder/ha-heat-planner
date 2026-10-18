@@ -64,6 +64,19 @@ The card is served by the integration itself; there is no separate frontend reso
 
 Under **Settings**: comfort temperature, price strategy, how much to lower and raise, extreme-price cut-off and threshold, the away setback, when it should be warm again, and the warm-up window.
 
+## How it works – built-in help
+
+![Built-in help](docs/help.png)
+
+Tap **How it works** in the card for a visual guide: a normal day with the price rules, the colours, what happens when you're away, how to edit, what happens when you set a thermostat yourself, the safety net, what it has learned about each room, and your current settings. It follows Home Assistant's language (English or Norwegian) and can be switched in place.
+
+You can also put the guide on its own dashboard view:
+
+```yaml
+type: custom:heat-planner-help-card
+# optional: language: en   (or nb)
+```
+
 ## Entities
 
 Per zone: target, mode, expected temperature, estimated cost and savings for the next 24 h, automatic control (switch), comfort temperature (number), price strategy (select). Per home: the current price level.
@@ -87,4 +100,4 @@ pytest
 
 Heat Planner planlegger oppvarmingen etter strømpris, hvem som er hjemme og hvordan hvert rom oppfører seg, og kortet forklarer hvorfor. Dra i døgnkurven for å endre den, og lagre for bare én dag, en ukedag, hverdager, helg eller alle dager. Kortet viser strømpris, mål og forventet romtemperatur time for time, og hva det koster.
 
-Installer via HACS som beskrevet over. Integrasjon og kort er oversatt til norsk.
+Installer via HACS som beskrevet over. Integrasjon og kort er oversatt til norsk. Trykk **Slik fungerer det** i kortet for en visuell veiledning, eller legg den på en egen side med `type: custom:heat-planner-help-card`.
