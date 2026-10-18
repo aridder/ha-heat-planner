@@ -258,10 +258,23 @@ def record_feedback(
             if lang == "nb" else "Adjusted many times today – change the settings in the plan instead."
         )
     if "comfort" in changes and not percent and anchor.get("comfort") is not None:
+        wanted = float(changes["comfort"])
         lo = max(anchor["comfort"] - DAILY_RANGE, safety_min_temp + 0.5)
-        changes["comfort"] = max(lo, min(anchor["comfort"] + DAILY_RANGE, float(changes["comfort"])))
+        changes["comfort"] = max(lo, min(anchor["comfort"] + DAILY_RANGE, wanted))
         if changes["comfort"] == before.get("comfort"):
             changes.pop("comfort")
+            # say what actually happened: nothing, because today's limit is reached
+            message = (
+                f"Komforten er allerede justert så mye som tillatt i dag (±{DAILY_RANGE:g}°). Endre den i innstillingene om du vil mer."
+                if lang == "nb" else
+                f"Comfort has already been adjusted as far as allowed today (±{DAILY_RANGE:g}°). Change it in the settings for more."
+            )
+        elif changes["comfort"] != wanted:
+            val = f"{changes['comfort']:g}".replace(".", "," if lang == "nb" else ".")
+            message = (
+                f"Komforttemperatur satt til {val}° – det meste som tillates i dag."
+                if lang == "nb" else f"Comfort temperature set to {val}° – the most allowed today."
+            )
     delta = changes.pop(SCHEDULE_DELTA, None)
     if delta:
         st["schedule"] = {str(k): v for k, v in shift_schedule(st["schedule"], delta).items()}

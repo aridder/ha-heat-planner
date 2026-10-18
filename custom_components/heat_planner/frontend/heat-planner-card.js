@@ -542,6 +542,7 @@ class HeatPlannerCard extends HTMLElement {
     return Number.isFinite(u) && Date.now() - u > STALE_MS;
   }
   _unavailable(z) {
+    if (typeof z.available === "boolean") return !z.available;
     const states = this._hass?.states;
     if (!states) return false;
     const id = z.climate_entity || z.number_entity;

@@ -616,7 +616,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         except Exception:  # noqa: BLE001 - book-keeping must never stop control
             _LOGGER.exception("Savings/alert book-keeping failed")
         async_check_issues(self)
-        return {"updated": dt_util.now().isoformat()}
+        self._last_ok = dt_util.now()
+        return {"updated": self._last_ok.isoformat()}
 
     # ------------------------------------------------------------------ insights
 
@@ -1136,6 +1137,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "auto": st.get("auto", True),
                     "manual_until": mu.isoformat() if mu else None,
                     "room_temperature": self.room_temperature(zid),
+                    "available": self._device(cfg)[0],
                     "plan": {**plan.as_dict(), "explanation": explain_savings(plan, lang, cur)} if plan else None,
                     "feedback": list(st.get("feedback", []))[-5:],
                 }
@@ -1167,5 +1169,6 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 for h, p in self.price_hours.items()
             ],
             "zones": zones,
-            "updated": dt_util.now().isoformat(),
+            # when planning last succeeded (the card warns if this gets old)
+            "updated": (getattr(self, "_last_ok", None) or dt_util.now()).isoformat(),
         }
