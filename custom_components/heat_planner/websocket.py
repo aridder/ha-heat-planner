@@ -31,6 +31,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_save)
     websocket_api.async_register_command(hass, ws_settings)
     websocket_api.async_register_command(hass, ws_subscribe)
+    websocket_api.async_register_command(hass, ws_feedback)
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/get"})
@@ -211,3 +212,24 @@ async def ws_settings(
             clean[k] = int(clean[k])
     await coord.async_set_settings(zone_id, clean)
     connection.send_result(msg["id"], coord.export())
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/feedback",
+        vol.Required("entry_id"): str,
+        vol.Required("zone"): str,
+        vol.Required("kind"): vol.In(["too_cold", "too_warm"]),
+    }
+)
+@websocket_api.async_response
+async def ws_feedback(
+    hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict
+) -> None:
+    """'Too cold' / 'too warm' from anyone in the household (small, bounded nudges)."""
+    coord = _get(hass, msg["entry_id"])
+    if coord is None or msg["zone"] not in {z["zone_id"] for z in coord.zone_configs}:
+        connection.send_error(msg["id"], "not_found", "Unknown entry or zone")
+        return
+    message = await coord.async_feedback(msg["zone"], msg["kind"])
+    connection.send_result(msg["id"], {"message": message})

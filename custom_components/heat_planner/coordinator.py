@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, fields
+from dataclasses import asdict, fields, replace
 from datetime import datetime, timedelta
 from functools import partial
 import logging
@@ -56,10 +56,13 @@ from .energy import (
     tariff_from_options,
 )
 from .learning import samples_from_history
+from .feedback import apply_feedback, changed_keys, shift_schedule
+from .occupancy import AUTO_HOUR, ArrivalModel, expected_arrival, learn_arrivals, summary as arrival_summary, warm_from_hour
 from .peak import realtime_shed
 from .tariff import describe as describe_tariff, effective_prices, fixed_prices
 from .solar import forecast_solar
 from .planner import (
+    explain_savings,
     model_quality,
     MODE_PERCENT,
     MODE_SETPOINT,
@@ -174,13 +177,32 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         })
         # until something is learned, start from what the house description suggests
         thermal = stored if stored.learned else thermal_prior(self.options.get(CONF_HOUSE))
-        return ZoneConfig(
+        zc = ZoneConfig(
             zone_id=zone_id,
             name=cfg.get(CONF_NAME, zone_id),
             mode=mode,
             thermal=thermal,
             **{**base, **settings},
         )
+        if zc.away_until_hour == AUTO_HOUR:
+            # warm again in time for when the household usually gets home
+            zc = replace(zc, away_until_hour=warm_from_hour(
+                expected_arrival(self.arrivals, dt_util.now().date()), self.lead_hours(zc), default=13
+            ))
+        return zc
+
+    @property
+    def arrivals(self) -> ArrivalModel | None:
+        data = self.state.get("arrivals")
+        return ArrivalModel.from_dict(data) if data else None
+
+    @staticmethod
+    def lead_hours(zone: ZoneConfig) -> float:
+        """Roughly how long the room needs to recover from the away setback."""
+        if zone.is_percent:
+            return 2.0
+        net = max(zone.thermal.gross_rate - 0.3, 0.2)
+        return max(0.5, min(6.0, abs(zone.away_offset) / net + zone.thermal.lag_hours))
 
     def heater_kw(self, zone_id: str) -> float:
         """Configured power, else measured, else a guess from the house description."""
@@ -731,6 +753,31 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         await self._save()
         await self.async_request_refresh()
 
+    async def async_feedback(self, zone_id: str, kind: str) -> str:
+        """'Too cold' / 'too warm' from the card: nudge the zone's settings."""
+        zone = self.zone(zone_id)
+        st = self.zone_state(zone_id)
+        before = {k: getattr(zone, k) for k in TUNABLE_ZONE}
+        if before.get("away_until_hour") != (st["settings"].get("away_until_hour", before["away_until_hour"])):
+            before["away_until_hour"] = st["settings"]["away_until_hour"]
+        plan = self.plans.get(zone_id)
+        mode = plan.hours[0].mode if plan and plan.hours else "normal"
+        history = st.setdefault("feedback", [])
+        lang = "nb" if (self.hass.config.language or "").startswith(("nb", "no", "nn")) else "en"
+        after, message = apply_feedback(
+            before, kind, mode, history, lang=lang, percent=zone.is_percent,
+            room_temp=self.room_temperature(zone_id),
+        )
+        changes = changed_keys(before, after)
+        delta = changes.pop("schedule_delta", None)
+        if delta:
+            st["schedule"] = {str(k): v for k, v in shift_schedule(st["schedule"], delta).items()}
+        st["settings"].update({k: v for k, v in changes.items() if k in TUNABLE_ZONE})
+        self._applied.pop(zone_id, None)
+        await self._save()
+        await self.async_request_refresh()
+        return message
+
     # ------------------------------------------------------------------ learning
 
     async def async_learn(self) -> None:
@@ -744,7 +791,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         end = dt_util.utcnow()
         start = end - timedelta(days=HISTORY_DAYS)
         weather = self.options.get(CONF_WEATHER)
-        changed = False
+        changed = await self._learn_arrivals(end)
         for cfg in self.zone_configs:
             zid = cfg[CONF_ZONE_ID]
             power = cfg.get(CONF_POWER_SENSOR)
@@ -784,6 +831,29 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._save()
             await self.async_request_refresh()
 
+    async def _learn_arrivals(self, end: datetime) -> bool:
+        """When does the household usually get home? (from the presence history)"""
+        from homeassistant.components.recorder import get_instance, history
+
+        ids = [e for e in self.options.get(CONF_PRESENCE, []) if e.startswith(("person.", "device_tracker."))]
+        if not ids:
+            return False
+        start = end - timedelta(days=42)
+        try:
+            hist = await get_instance(self.hass).async_add_executor_job(
+                lambda: history.get_significant_states(self.hass, start, end, ids, no_attributes=True)
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("No presence history: %s", err)
+            return False
+        series = {
+            eid: [(dt_util.as_local(s.last_changed), s.state) for s in hist.get(eid, []) if hasattr(s, "state")]
+            for eid in ids
+        }
+        model = learn_arrivals(series, dt_util.get_default_time_zone(), now=dt_util.now(), previous=self.arrivals)
+        self.state["arrivals"] = model.as_dict()
+        return True
+
     async def _learn_power(self, entity_id: str, start: datetime, end: datetime) -> float | None:
         """Heater power = the typical 'on' level seen on its power sensor (kW)."""
         from homeassistant.components.recorder import get_instance, history
@@ -808,6 +878,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     # ------------------------------------------------------------------ export
 
+    def _arrival_export(self) -> dict[str, Any] | None:
+        zones = [self.zone(z[CONF_ZONE_ID]) for z in self.zone_configs]
+        lead = max((self.lead_hours(z) for z in zones if not z.is_percent), default=2.0)
+        return arrival_summary(self.arrivals, dt_util.now().date(), lead)
+
     def _tariff_export(self) -> dict[str, Any]:
         tariff = tariff_from_options(self.options)
         lang = "nb" if (self.hass.config.language or "").startswith(("nb", "no", "nn")) else "en"
@@ -817,6 +892,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Everything the card needs, JSON serialisable."""
         levels = classify_prices(self.price_hours, self.rules())
         extra = _float(self.options.get(CONF_PRICE_EXTRA)) or 0.0
+        lang = "nb" if (self.hass.config.language or "").startswith(("nb", "no", "nn")) else "en"
+        cur = "kr" if self.hass.config.currency in ("NOK", "SEK", "DKK") else self.hass.config.currency
         zones = []
         for cfg in self.zone_configs:
             zid = cfg[CONF_ZONE_ID]
@@ -834,7 +911,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "mode": zc.mode,
                     "climate_entity": cfg.get(CONF_CLIMATE),
                     "number_entity": cfg.get(CONF_NUMBER),
-                    "settings": {k: getattr(zc, k) for k in TUNABLE_ZONE},
+                    "settings": {
+                        **{k: getattr(zc, k) for k in TUNABLE_ZONE},
+                        **({"away_until_hour": AUTO_HOUR}
+                           if st.get("settings", {}).get("away_until_hour") == AUTO_HOUR else {}),
+                    },
                     "thermal": {**asdict(zc.thermal), "quality": model_quality(zc.thermal)},
                     "heater_kw": zc.heater_kw,
                     "heater_kw_source": (
@@ -846,7 +927,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "auto": st.get("auto", True),
                     "manual_until": mu.isoformat() if mu else None,
                     "room_temperature": self.room_temperature(zid),
-                    "plan": plan.as_dict() if plan else None,
+                    "plan": {**plan.as_dict(), "explanation": explain_savings(plan, lang, cur)} if plan else None,
+                    "feedback": list(st.get("feedback", []))[-5:],
                 }
             )
         return {
@@ -859,6 +941,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "price_extra_configured": extra,
             "rules": asdict(self.rules()),
             "optimize": self.optimize,
+            "features": ["feedback"],
+            "arrival": self._arrival_export(),
             "tariff": self._tariff_export(),
             "peak": self.peak_state.as_dict() if self.peak_state else None,
             "away": self.away,

@@ -89,3 +89,33 @@ async def test_capacity_limit_spreads_heating(hass: HomeAssistant, setup_states,
     total = stue.hours[0].kwh + kjokken.hours[0].kwh
     assert total <= 6.0
     assert first is not None
+
+
+async def test_feedback_and_auto_arrival(hass: HomeAssistant, setup_states, hass_ws_client, freezer: FrozenDateTimeFactory) -> None:
+    from custom_components.heat_planner.occupancy import ArrivalModel
+
+    client = await hass_ws_client(hass)
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=11))
+    entry = _entry({"contract": "fixed", "fixed_price": 0.5, "grid": "none", "peak_limit": False})
+    coord = await _setup(hass, entry)
+    before = coord.zone("stue").comfort
+    await client.send_json({"id": 1, "type": f"{DOMAIN}/feedback", "entry_id": entry.entry_id, "zone": "stue", "kind": "too_cold"})
+    msg = await client.receive_json()
+    assert msg["success"] and msg["result"]["message"]
+    await hass.async_block_till_done()
+    assert coord.zone("stue").comfort == before + 0.5
+    assert coord.export()["zones"][0]["feedback"][-1]["kind"] == "too_cold"
+
+    # "auto" warm-up hour follows the learned arrival
+    today = dt_util.now().date()
+    obs = {wd: [] for wd in range(7)}
+    for i in range(1, 6):
+        d = today - timedelta(days=7 * i)
+        obs[d.weekday()].append((d.isoformat(), 16 * 60 + 30))
+    coord.state["arrivals"] = ArrivalModel(observations=obs, updated=dt_util.now().isoformat()).as_dict()
+    await coord.async_set_settings("stue", {"away_until_hour": -1})
+    zone = coord.zone("stue")
+    assert 10 <= zone.away_until_hour <= 16  # arrival minus the time a slow floor needs
+    exp = coord.export()
+    assert exp["arrival"]["expected"] == "16:30"
+    assert exp["zones"][0]["settings"]["away_until_hour"] == -1
