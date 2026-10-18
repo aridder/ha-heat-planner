@@ -72,6 +72,10 @@ async def test_config_flow_with_price_sensor(hass: HomeAssistant, setup_states) 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"house_type": "terraced", "insulation": "normal", "heating_sources": ["floor_electric"], "heated_area": 120}
     )
+    assert result["step_id"] == "energy"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"contract": "fixed", "fixed_price": 0.5, "grid": "elvia_2026", "peak_limit": True}
+    )
     assert result["type"] is FlowResultType.MENU and result["step_id"] == "setup_method"
     assert result["menu_options"] == ["ai_copy", "zones"]  # no AI in HA
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "zones"})
@@ -86,6 +90,7 @@ async def test_config_flow_with_price_sensor(hass: HomeAssistant, setup_states) 
     opts = result["options"]
     assert opts["price_sensor"] == PRICE_SENSOR and opts["use_history"] is True
     assert opts["house"]["insulation"] == "normal"
+    assert opts["energy"]["contract"] == "fixed" and opts["energy"]["peak_limit"] is True
     assert [z["climate_entity"] for z in opts["zones"]] == ["climate.stue"]
 
 

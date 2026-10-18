@@ -254,6 +254,66 @@ def _house_schema(d: dict[str, Any]) -> vol.Schema:
     )
 
 
+CONF_ENERGY = "energy"
+CONTRACTS = ["spot", "spot_support", "fixed"]
+GRID_TARIFFS = ["elvia_2026", "custom", "none"]
+
+
+def _guess_house_meter(hass: HomeAssistant) -> str | None:
+    """A whole-house power sensor (HAN/AMS reader, Tibber Pulse …) if there is one."""
+    best = None
+    for st in hass.states.async_all("sensor"):
+        eid = st.entity_id
+        if st.attributes.get("device_class") != "power":
+            continue
+        if any(x in eid for x in ("tibber_pulse", "ams", "han_", "_han", "house_power", "huset", "hus_effekt")) and not any(
+            x in eid for x in ("production", "min_power", "max_power", "average")
+        ):
+            if best is None or st.state not in ("unknown", "unavailable"):
+                best = eid
+    return best
+
+
+def energy_defaults(hass: HomeAssistant, opts: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Sensible contract and grid tariff for where the home is."""
+    opts = opts or {}
+    d = dict(opts.get(CONF_ENERGY) or {})
+    norway = (hass.config.country or "").upper() == "NO"
+    d.setdefault("contract", "spot_support" if norway else "spot")
+    d.setdefault("fixed_price", 0.50)
+    d.setdefault("grid", "elvia_2026" if norway and opts.get(CONF_NORDPOOL_AREA, "NO1") == "NO1" else "none")
+    d.setdefault("grid_day", 0.364)
+    d.setdefault("grid_night", 0.264)
+    d.setdefault("extra", float(opts.get(CONF_PRICE_EXTRA) or 0.0) if d["grid"] == "none" else 0.0)
+    d.setdefault("peak_limit", norway)
+    meter = _guess_house_meter(hass)
+    if meter:
+        d.setdefault("house_power_sensor", meter)
+    return d
+
+
+def _energy_schema(d: dict[str, Any]) -> vol.Schema:
+    money = selector.NumberSelectorConfig(min=0, max=10, step=0.001, mode=selector.NumberSelectorMode.BOX, unit_of_measurement="/kWh")
+    return vol.Schema(
+        {
+            vol.Required("contract", default=d["contract"]): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=CONTRACTS, translation_key="contract", mode=selector.SelectSelectorMode.LIST)
+            ),
+            vol.Optional("fixed_price", default=d["fixed_price"]): selector.NumberSelector(money),
+            vol.Required("grid", default=d["grid"]): selector.SelectSelector(
+                selector.SelectSelectorConfig(options=GRID_TARIFFS, translation_key="grid", mode=selector.SelectSelectorMode.LIST)
+            ),
+            vol.Optional("grid_day", default=d["grid_day"]): selector.NumberSelector(money),
+            vol.Optional("grid_night", default=d["grid_night"]): selector.NumberSelector(money),
+            vol.Optional("extra", default=d["extra"]): selector.NumberSelector(money),
+            vol.Required("peak_limit", default=d["peak_limit"]): bool,
+            vol.Optional("house_power_sensor", description={"suggested_value": d.get("house_power_sensor")}): selector.EntitySelector(
+                selector.EntitySelectorConfig(domain="sensor", device_class="power")
+            ),
+        }
+    )
+
+
 def _history_schema(d: dict[str, Any]) -> vol.Schema:
     return vol.Schema({vol.Required(CONF_USE_HISTORY, default=d.get(CONF_USE_HISTORY, True)): bool})
 
@@ -350,8 +410,14 @@ class HeatPlannerConfigFlow(_AssistantMixin, ConfigFlow, domain=DOMAIN):
     async def async_step_house(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         if user_input is not None:
             self._data[CONF_HOUSE] = self._house = user_input
-            return await self.async_step_setup_method()
+            return await self.async_step_energy()
         return self.async_show_form(step_id="house", data_schema=_house_schema({}))
+
+    async def async_step_energy(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            self._data[CONF_ENERGY] = user_input
+            return await self.async_step_setup_method()
+        return self.async_show_form(step_id="energy", data_schema=_energy_schema(energy_defaults(self.hass, self._data)))
 
     async def async_step_zones(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         cands = discover(self.hass)
@@ -412,7 +478,7 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
         menu = ["assistant", "discover", "add_zone"]
         if self._zones:
             menu += ["edit_zone", "remove_zone"]
-        menu += ["house", "history", "general"]
+        menu += ["house", "energy", "history", "general"]
         return self.async_show_menu(step_id="init", menu_options=menu)
 
     # -- zones ---------------------------------------------------------------
@@ -545,6 +611,12 @@ class HeatPlannerOptionsFlow(_AssistantMixin, OptionsFlow):
         if user_input is not None:
             return self.async_create_entry(data={**self._opts, **user_input})
         return self.async_show_form(step_id="history", data_schema=_history_schema(self._opts))
+
+    async def async_step_energy(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        if user_input is not None:
+            self._opts[CONF_ENERGY] = user_input
+            return self.async_create_entry(data=self._opts)
+        return self.async_show_form(step_id="energy", data_schema=_energy_schema(energy_defaults(self.hass, self._opts)))
 
     async def async_step_general(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}

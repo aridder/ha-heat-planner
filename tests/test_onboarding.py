@@ -56,6 +56,8 @@ async def test_flow_sets_up_nordpool_for_the_user(hass: HomeAssistant) -> None:
         )
     assert setup.called and result["step_id"] == "house"
     result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
+    assert result["step_id"] == "energy"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {})
     # no thermostats -> zones skipped, straight to history
     assert result["step_id"] == "history"
     with patch("custom_components.heat_planner.async_setup_entry", return_value=True):
@@ -65,6 +67,8 @@ async def test_flow_sets_up_nordpool_for_the_user(hass: HomeAssistant) -> None:
     assert o["price_type"] == "nordpool" and o["nordpool_entry"] == "np_entry" and o["nordpool_area"] == "NO1"
     assert o["presence_entities"] == ["person.a"] and o["use_history"] is True
     assert o["house"]["house_type"] == "terraced"
+    # Norway, NO1: spot with support, Elvia grid tariff and peak limiting by default
+    assert o["energy"]["contract"] == "spot_support" and o["energy"]["grid"] == "elvia_2026" and o["energy"]["peak_limit"] is True
 
 
 async def test_nordpool_failure_is_explained(hass: HomeAssistant) -> None:

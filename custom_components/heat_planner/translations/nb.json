@@ -102,6 +102,27 @@
         "data_description": {
           "accept": "Slå av for å velge rom selv i stedet."
         }
+      },
+      "energy": {
+        "title": "Strømavtale og effekttrinn",
+        "description": "Hva dere faktisk betaler per kWh avgjør hva som lønner seg. Med fastpris (f.eks. Norgespris) sparer det nesten ingenting å flytte varme mellom timer – da er nettleien og å holde månedens effekttopp lav det viktigste.",
+        "data": {
+          "contract": "Strømavtale",
+          "fixed_price": "Fastpris inkl. mva",
+          "grid": "Nettleie (energiledd)",
+          "grid_day": "Nettleie dag (hverdager 06–22)",
+          "grid_night": "Nettleie natt og helg",
+          "extra": "Annen kostnad per kWh",
+          "peak_limit": "Hold månedens effekttopp lav (effekttrinn)",
+          "house_power_sensor": "Strømmåler for hele huset (valgfritt)"
+        },
+        "data_description": {
+          "contract": "Spot med strømstøtte: staten dekker 90 % over 77 øre/kWh.",
+          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «egen» for å skrive inn selv.",
+          "extra": "Påslag fra strømleverandør eller annet per kWh.",
+          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn.",
+          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene."
+        }
       }
     },
     "abort": {},
@@ -124,7 +145,8 @@
           "remove_zone": "Fjern sone",
           "house": "Om huset",
           "history": "Lær av historikken",
-          "general": "Pris og tilstedeværelse"
+          "general": "Pris og tilstedeværelse",
+          "energy": "Strømavtale og effekttrinn"
         }
       },
       "add_zone": {
@@ -273,6 +295,27 @@
           "ai_auto": "La AI sette opp for meg (bruker AI-en som allerede er i Home Assistant)",
           "ai_copy": "Bruk Claude eller ChatGPT selv (kopier og lim inn)"
         }
+      },
+      "energy": {
+        "title": "Strømavtale og effekttrinn",
+        "description": "Hva dere faktisk betaler per kWh avgjør hva som lønner seg. Med fastpris (f.eks. Norgespris) sparer det nesten ingenting å flytte varme mellom timer – da er nettleien og å holde månedens effekttopp lav det viktigste.",
+        "data": {
+          "contract": "Strømavtale",
+          "fixed_price": "Fastpris inkl. mva",
+          "grid": "Nettleie (energiledd)",
+          "grid_day": "Nettleie dag (hverdager 06–22)",
+          "grid_night": "Nettleie natt og helg",
+          "extra": "Annen kostnad per kWh",
+          "peak_limit": "Hold månedens effekttopp lav (effekttrinn)",
+          "house_power_sensor": "Strømmåler for hele huset (valgfritt)"
+        },
+        "data_description": {
+          "contract": "Spot med strømstøtte: staten dekker 90 % over 77 øre/kWh.",
+          "grid": "Elvia 2026: 36,40 øre dag, 26,40 øre natt/helg. Velg «egen» for å skrive inn selv.",
+          "extra": "Påslag fra strømleverandør eller annet per kWh.",
+          "peak_limit": "Fordeler varmen mellom rommene så snittet av månedens tre høyeste timer holder seg i dagens effekttrinn.",
+          "house_power_sensor": "F.eks. Tibber Pulse eller HAN-leser. Uten den teller bare varmeovnene."
+        }
       }
     },
     "error": {
@@ -340,6 +383,20 @@
         "heat_pump_air_water": "Luft-til-vann-varmepumpe",
         "district_heating": "Fjernvarme",
         "wood_stove": "Vedovn"
+      }
+    },
+    "contract": {
+      "options": {
+        "spot": "Spotpris",
+        "spot_support": "Spotpris med strømstøtte",
+        "fixed": "Fastpris (f.eks. Norgespris)"
+      }
+    },
+    "grid": {
+      "options": {
+        "elvia_2026": "Elvia 2026",
+        "custom": "Skriv inn selv",
+        "none": "Ikke med"
       }
     }
   },

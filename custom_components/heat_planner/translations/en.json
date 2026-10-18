@@ -102,6 +102,27 @@
         "data_description": {
           "accept": "Turn off to pick rooms yourself instead."
         }
+      },
+      "energy": {
+        "title": "Electricity contract and capacity tariff",
+        "description": "What you actually pay per kWh decides what is worth doing. With a fixed price (e.g. Norgespris) moving heat between hours saves almost nothing – then the grid tariff and keeping the monthly peak low matter most.",
+        "data": {
+          "contract": "Electricity contract",
+          "fixed_price": "Fixed price incl. VAT",
+          "grid": "Grid tariff (energy part)",
+          "grid_day": "Grid tariff day (weekdays 06–22)",
+          "grid_night": "Grid tariff night and weekend",
+          "extra": "Other cost per kWh",
+          "peak_limit": "Keep the monthly peak low (capacity tariff)",
+          "house_power_sensor": "Whole-house power meter (optional)"
+        },
+        "data_description": {
+          "contract": "Spot with support: the state pays 90 % above 77 øre/kWh (Norway).",
+          "grid": "Elvia 2026: 36.40 øre day, 26.40 øre night/weekend. Choose custom to enter your own.",
+          "extra": "Supplier mark-up or anything else per kWh.",
+          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step.",
+          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted."
+        }
       }
     },
     "abort": {},
@@ -124,7 +145,8 @@
           "remove_zone": "Remove zone",
           "house": "About your home",
           "history": "Learn from history",
-          "general": "Price & presence"
+          "general": "Price & presence",
+          "energy": "Electricity contract and capacity tariff"
         }
       },
       "add_zone": {
@@ -273,6 +295,27 @@
           "ai_auto": "Let AI set it up (uses the AI already in Home Assistant)",
           "ai_copy": "Use Claude or ChatGPT myself (copy and paste)"
         }
+      },
+      "energy": {
+        "title": "Electricity contract and capacity tariff",
+        "description": "What you actually pay per kWh decides what is worth doing. With a fixed price (e.g. Norgespris) moving heat between hours saves almost nothing – then the grid tariff and keeping the monthly peak low matter most.",
+        "data": {
+          "contract": "Electricity contract",
+          "fixed_price": "Fixed price incl. VAT",
+          "grid": "Grid tariff (energy part)",
+          "grid_day": "Grid tariff day (weekdays 06–22)",
+          "grid_night": "Grid tariff night and weekend",
+          "extra": "Other cost per kWh",
+          "peak_limit": "Keep the monthly peak low (capacity tariff)",
+          "house_power_sensor": "Whole-house power meter (optional)"
+        },
+        "data_description": {
+          "contract": "Spot with support: the state pays 90 % above 77 øre/kWh (Norway).",
+          "grid": "Elvia 2026: 36.40 øre day, 26.40 øre night/weekend. Choose custom to enter your own.",
+          "extra": "Supplier mark-up or anything else per kWh.",
+          "peak_limit": "Spreads heating between rooms so the average of the month's three highest hours stays in the current capacity step.",
+          "house_power_sensor": "E.g. a Tibber Pulse or HAN reader. Without one, only the heaters' own load is counted."
+        }
       }
     },
     "error": {
@@ -340,6 +383,20 @@
         "heat_pump_air_water": "Air-to-water heat pump",
         "district_heating": "District heating",
         "wood_stove": "Wood stove"
+      }
+    },
+    "contract": {
+      "options": {
+        "spot": "Spot price",
+        "spot_support": "Spot price with electricity support (strømstøtte)",
+        "fixed": "Fixed price (e.g. Norgespris)"
+      }
+    },
+    "grid": {
+      "options": {
+        "elvia_2026": "Elvia 2026",
+        "custom": "Enter my own",
+        "none": "Not included"
       }
     }
   },
