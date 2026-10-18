@@ -1,6 +1,7 @@
 """Tests for the DP optimiser and the honest-savings fields of the plan."""
 
 import time
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -10,6 +11,7 @@ from custom_components.heat_planner.optimizer import (
     optimize_zone,
 )
 from custom_components.heat_planner.planner import (
+    LEVEL_EXTREME,
     R_PREHEAT,
     R_PREHEAT_EXTREME,
     Plan,
@@ -18,6 +20,8 @@ from custom_components.heat_planner.planner import (
     ZoneConfig,
     build_plan,
     default_schedule,
+    _cap_off_runs,
+    _simulate,
     explain_savings,
 )
 
@@ -169,6 +173,139 @@ def test_percent_zone_optimises_within_bounds():
         assert h.target is None or 0 <= h.target <= 100
     assert p.cost <= p.baseline_cost + 1e-6
     assert p.comfort_deficit is None  # no temperature reference for percent zones
+
+
+def _deltas(z, out):
+    return [h.target - h.scheduled for h in out if h.target is not None]
+
+
+def test_price_shift_and_preheat_bound_the_actions():
+    p = prices(spike(1.0, 6.0))
+    cheap_comfort = OptimizerWeights(comfort=0.01)
+    for shift, pre, agg in ((1.0, 1.0, 1.0), (0.5, 0.5, 1.0), (1.0, 1.5, 2.0), (2.0, 0.25, 0.5)):
+        z = zone(price_shift=shift, preheat=pre, price_aggressiveness=agg, extreme_off=False,
+                 safety_min_temp=5.0)
+        out = plan(z, p, optimizer_weights=cheap_comfort).hours
+        d = _deltas(z, out)
+        assert min(d) >= -shift * agg - 1e-9, (shift, pre, agg, d)
+        assert max(d) <= 2 * pre * min(agg, 1.0) + 1e-9, (shift, pre, agg, d)
+        assert all(abs(h.target * 2 - round(h.target * 2)) < 1e-9 for h in out)  # 0.5 °C grid
+    # the bound itself is reachable when it pays (comfort almost free)
+    z = zone(price_shift=1.5, extreme_off=False, safety_min_temp=5.0)
+    assert min(_deltas(z, plan(z, p, optimizer_weights=cheap_comfort).hours)) == -1.5
+
+
+def test_zero_price_shift_never_lowers_zero_preheat_never_raises():
+    p = prices(spike(1.0, 6.0))
+    w = OptimizerWeights(comfort=0.01)
+    z = zone(price_shift=0.0, extreme_off=False)
+    assert min(_deltas(z, plan(z, p, optimizer_weights=w).hours)) == 0.0
+    z = zone(preheat=0.0)
+    out = plan(z, p).hours
+    assert max(_deltas(z, out)) == 0.0
+    assert not any(R_PREHEAT in h.reasons or R_PREHEAT_EXTREME in h.reasons for h in out)
+
+
+def test_percent_zone_bounds_in_points():
+    z = zone(mode="percent", comfort=0.0, min_value=0.0, max_value=100.0, away_offset=-20.0,
+             price_shift=15.0, preheat=10.0, extreme_off=False)
+    out = plan(z, prices(spike(1.0, 6.0)), schedule=default_schedule("percent"),
+               optimizer_weights=OptimizerWeights(comfort=0.01)).hours
+    d = _deltas(z, out)
+    assert min(d) >= -15.0 and max(d) <= 20.0
+    assert min(d) < 0  # it does lower
+    assert all(h.target % 5 == 0 for h in out)
+
+
+def test_lag_moves_preheat_earlier_and_keeps_expensive_hours_warm():
+    # evening comfort (21 °C) starts at 16:00, the price spike is 17–19
+    sched = {wd: [-2.0] * 16 + [0.0] * 7 + [-2.0] for wd in range(7)}
+    p = prices(spike(1.0, 6.0))
+
+    def first_raise(pl):
+        return next(h.start.hour for h in pl.hours if h.target is not None
+                    and h.target > h.scheduled)
+
+    z0 = zone(thermal=ThermalModel(gross_rate=3.0, tau_hours=30.0))
+    z2 = zone(thermal=ThermalModel(gross_rate=3.0, tau_hours=30.0, lag_hours=2.0))
+    p0 = plan(z0, p, room=19.0, schedule=sched)
+    p2 = plan(z2, p, room=19.0, schedule=sched)
+    assert first_raise(p2) < first_raise(p0)
+    # the room entering and during the expensive hours (predicted = end of hour)
+    for h in p2.hours[16:20]:
+        assert h.predicted >= h.scheduled - 0.25, h
+    # ignoring the lag (lag-0 targets on the slow floor) would arrive too late
+    naive = [replace(h) for h in p0.hours]
+    _simulate(z2, naive, 19.0, {}, -5.0)
+    assert min(h.predicted - h.scheduled for h in naive[16:20]) < -1.0
+
+
+def test_runtime_with_lag():
+    z = zone(thermal=ThermalModel(gross_rate=2.0, tau_hours=30.0, lag_hours=3.0),
+             price_shift=2.0, preheat=1.5)
+    p = prices(TYPICAL)
+    rule_slots = plan(z, p, hours=36, method="rules", schedule=default_schedule("setpoint")).hours
+    t = time.perf_counter()
+    for _ in range(5):
+        optimize_zone(z, rule_slots, p, 19.0, {}, -5.0)
+    assert (time.perf_counter() - t) / 5 < 0.25
+
+
+def test_off_only_in_extreme_hours():
+    # expensive but not extreme (below extreme_min_price): no OFF even if comfort is free
+    z = zone(max_off_hours=3, thermal=ThermalModel(gross_rate=4.0, tau_hours=10.0),
+             safety_min_temp=5.0)
+    p = prices([0.5] * 6 + [1.9] * 12 + [0.5] * 6)
+    out = plan(z, p, optimizer_weights=OptimizerWeights(comfort=0.001, terminal=0.0)).hours
+    assert all(h.level != LEVEL_EXTREME for h in out)
+    assert all(h.target is not None for h in out)
+    # explicitly allowed by the weights
+    w = OptimizerWeights(comfort=0.001, terminal=0.0, off_levels=("expensive", "extreme"))
+    assert any(h.target is None for h in plan(z, p, optimizer_weights=w).hours)
+
+
+def test_initial_off_run_counts_toward_max_off():
+    z = zone(max_off_hours=2, thermal=ThermalModel(gross_rate=4.0, tau_hours=10.0),
+             safety_min_temp=5.0)
+    p = prices([9.0] * 2 + [1.0] * 22)
+    w = OptimizerWeights(comfort=0.001, terminal=0.0)
+    fresh = plan(z, p, optimizer_weights=w).hours
+    assert fresh[0].target is None and fresh[1].target is None
+    one = plan(z, p, optimizer_weights=w, initial_off_run=1).hours
+    assert not (one[0].target is None and one[1].target is None)
+    two = plan(z, p, optimizer_weights=w, initial_off_run=2).hours
+    assert two[0].target is not None
+    # rules path: off, off at the start; already off for 2 h -> first hour heats
+    assert [h.target is None for h in plan(z, p, method="rules").hours[:3]] == [
+        True, True, False]
+    one_r = plan(z, p, method="rules", initial_off_run=1).hours
+    assert [h.target is None for h in one_r[:2]] == [True, False]
+    rules = plan(z, p, method="rules", initial_off_run=2).hours
+    assert [h.mode for h in rules[:2]] == ["save", "save"]
+
+
+def test_lowered_setpoints_never_below_safety_floor():
+    z = zone(safety_min_temp=20.5, price_shift=3.0, price_aggressiveness=2.0,
+             thermal=ThermalModel(gross_rate=4.0, tau_hours=10.0))
+    p = prices([1.0] * 6 + [8.0] * 12 + [1.0] * 6)
+    out = plan(z, p, optimizer_weights=OptimizerWeights(comfort=0.001)).hours
+    lowered = [h for h in out if h.target is not None and h.target < h.scheduled]
+    assert lowered
+    assert all(h.target >= 20.5 for h in lowered)
+    # a schedule already below the floor is kept, never lowered further
+    sched = {wd: [-3.0] * 24 for wd in range(7)}  # 18 °C
+    out = plan(z, p, schedule=sched, room=18.0,
+               optimizer_weights=OptimizerWeights(comfort=0.001)).hours
+    assert all(h.target is None or h.target >= h.scheduled for h in out)
+
+
+def test_cap_off_runs_respects_safety_floor():
+    z = zone(max_off_hours=1, safety_min_temp=20.5, price_shift=3.0)
+    slots = plan(z, prices([9.0] * 4 + [1.0] * 20), method="rules").hours
+    for s in slots[:4]:
+        s.target = None
+    _cap_off_runs(z, slots, initial_off_run=1)
+    assert [s.target for s in slots[:4]] == [20.5] * 4
 
 
 # --------------------------------------------------------------------------- rules path

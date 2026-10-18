@@ -456,9 +456,17 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             outdoor=self.outdoor,
             outdoor_default=self.outdoor_now(),
             method=method or ("optimize" if self.optimize else "rules"),
+            initial_off_run=self._off_run(zone_id),
             solar=self.solar or None,
             adjust=adjust,
         )
+
+    def _off_run(self, zone_id: str) -> int:
+        """Whole hours this zone has already been switched off by us (for max-off)."""
+        last = self._applied.get(zone_id)
+        if not last or not last.get("off") or not last.get("off_since"):
+            return 0
+        return int((dt_util.now() - last["off_since"]).total_seconds() // 3600) + 1
 
     async def _prices(self) -> None:
         """Spot prices → what the household actually pays per kWh."""
@@ -884,9 +892,13 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if zone_id in self._shed and value is not None and not off:
             # live capacity guard: lower this room for the rest of the hour
             value = self._round(max(zone.min_value, value - (20 if zone.is_percent else 2)), step)
-        if value is not None and not off and not zone.is_percent and value < zone.safety_min_temp:
-            # whatever stacked up (away, price, peak, feedback): never ask for less than the floor
-            value = self._round(zone.safety_min_temp, step)
+        if value is not None and not off and not zone.is_percent:
+            # whatever stacked up (price, peak, live guard): never below the safety floor,
+            # unless the user's own schedule/away setting is lower than that
+            ref = min(hour.scheduled, zone.comfort + zone.away_offset) if "away" in hour.reasons else hour.scheduled
+            floor = min(zone.safety_min_temp, ref)
+            if value < floor:
+                value = self._round(floor, step)
 
         # Safety floor with hysteresis (needs a room temperature).
         room = self.room_temperature(zone_id)
@@ -916,6 +928,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "value": None if off and not zone.is_percent else (0 if off else value),
                 "off": off,
                 "at": now if needs or not last else last["at"],
+                "off_since": (last.get("off_since") if last and last.get("off") else now) if off else None,
             }
         except Exception:  # noqa: BLE001
             _LOGGER.exception("Could not apply plan for %s", zone_id)
