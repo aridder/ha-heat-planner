@@ -454,11 +454,15 @@ def build_plan(
     # Same model, start temperature and weather as the plan, so pre-heat energy counts.
     _simulate_with(zone, base_slots, room_temp, outdoor or {}, outdoor_default, solar)
 
+    # Cost and savings over the hours that have a price (the plan often runs past
+    # the last published price); energy over the whole horizon.
+    priced = [i for i, s in enumerate(slots) if s.cost is not None and base_slots[i].cost is not None]
+
     def total(items: list[PlanHour]) -> tuple[float | None, float]:
         kwh = sum(i.kwh for i in items)
-        if any(i.cost is None for i in items):
+        if not priced:
             return None, kwh
-        return sum(i.cost for i in items), kwh  # type: ignore[misc]
+        return sum(items[i].cost for i in priced), kwh  # type: ignore[misc]
 
     cost, kwh = total(slots)
     bcost, bkwh = total(base_slots)
