@@ -358,6 +358,7 @@ def build_plan(
                 # away is a floor, not additive: night setback and away do not stack
                 target = min(sched, zone.comfort + zone.away_offset)
             reasons.append(R_AWAY)
+        reference = target  # schedule, or the away floor: what price logic lowers from
 
         # Look ahead for expensive/extreme hours (crosses midnight).
         ahead = [
@@ -402,6 +403,9 @@ def build_plan(
             mode = "off"
 
         target = _clamp(target, zone.min_value, zone.max_value)
+        if not zone.is_percent and not off and target < reference and target < zone.safety_min_temp:
+            # price lowering never takes a room below the safety floor (or the away floor, if lower)
+            target = max(target, min(reference, zone.safety_min_temp))
         slots.append(
             PlanHour(
                 start=t,
