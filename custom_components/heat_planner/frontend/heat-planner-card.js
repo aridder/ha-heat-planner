@@ -38,7 +38,8 @@ const I18N = {
     strategy: "Price strategy", strategies: ["Ignore", "Gentle", "Balanced", "Aggressive"],
     shift: "Lower in expensive hours", preheatS: "Raise before expensive hours", extremeOff: "Turn off at extreme prices",
     extremeAbs: "Extreme price from", safety: "Never cut off below", away: "Lower when nobody is home", warmFrom: "Warm again from",
-    protectFrom: "No price saving from", protectTo: "No price saving until", model: (g, tau, l) => `Room model: heats ${g}°/h, loses half its warmth in ${tau} h${l ? " (learned)" : " (default)"}.`,
+    protectFrom: "No price saving from", protectTo: "No price saving until", model: (g, tau, l) => `Room model: heats ${g}°/h, loses half its warmth in ${tau} h${l ? " (learned from history)" : " (from your home description)"}.`,
+    power: (kw, src) => `Heater ${kw} kW${src === "measured" ? " (measured)" : src === "estimate" ? " (estimate)" : ""}.`,
     resume: "Resume plan", manualBadge: "Manual",
   },
   nb: {
@@ -75,7 +76,8 @@ const I18N = {
     strategy: "Prisstrategi", strategies: ["Ignorer", "Forsiktig", "Balansert", "Aggressiv"],
     shift: "Senk i dyre timer", preheatS: "Hev før dyre timer", extremeOff: "Slå av ved ekstrempris",
     extremeAbs: "Ekstrempris fra", safety: "Aldri av under", away: "Senk når ingen er hjemme", warmFrom: "Varmt igjen fra kl.",
-    protectFrom: "Ingen prissparing fra kl.", protectTo: "Ingen prissparing til kl.", model: (g, tau, l) => `Rommodell: varmes ${g}°/t, mister halve varmen på ${tau} t${l ? " (lært)" : " (standard)"}.`,
+    protectFrom: "Ingen prissparing fra kl.", protectTo: "Ingen prissparing til kl.", model: (g, tau, l) => `Rommodell: varmes ${g}°/t, mister halve varmen på ${tau} t${l ? " (lært av historikken)" : " (fra beskrivelsen av huset)"}.`,
+    power: (kw, src) => `Effekt ${String(kw).replace(".", ",")} kW${src === "measured" ? " (målt)" : src === "estimate" ? " (anslått)" : ""}.`,
     resume: "Gjenoppta plan", manualBadge: "Manuell",
   },
 };
@@ -696,10 +698,10 @@ class HeatPlannerCard extends HTMLElement {
     stepper(t.warmFrom, "away_until_hour", 1, 0, 23, (v) => `${String(v).padStart(2, "0")}:00`);
     stepper(t.protectFrom, "protected_from_hour", 1, 0, 23, (v) => `${String(v).padStart(2, "0")}:00`);
     stepper(t.protectTo, "protected_to_hour", 1, 1, 24, (v) => `${String(v).padStart(2, "0")}:00`);
-    if (!pct && z.thermal) {
-      const half = Math.round(z.thermal.tau_hours * Math.LN2);
-      grid.append(el("div", { class: "model", text: t.model(z.thermal.gross_rate, half, z.thermal.learned) }));
-    }
+    const notes = [];
+    if (!pct && z.thermal) notes.push(t.model(z.thermal.gross_rate, Math.round(z.thermal.tau_hours * Math.LN2), z.thermal.learned));
+    if (z.heater_kw) notes.push(t.power(z.heater_kw, z.heater_kw_source));
+    if (notes.length) grid.append(el("div", { class: "model", text: notes.join(" ") }));
     d.append(grid);
     return d;
   }

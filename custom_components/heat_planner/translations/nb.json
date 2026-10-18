@@ -31,6 +31,33 @@
         "data_description": {
           "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
         }
+      },
+      "house": {
+        "title": "Om huset",
+        "description": "En grov beskrivelse gir en god startmodell for hvor fort rommene varmes opp og kjøles ned. Den forbedres med historikken din hvis du tillater det.",
+        "data": {
+          "house_type": "Boligtype",
+          "insulation": "Isolasjon",
+          "heating_sources": "Oppvarming",
+          "heated_area": "Oppvarmet areal"
+        },
+        "data_description": {
+          "insulation": "Gammel: før ca. 1980 og ikke etterisolert. God: nyere enn ca. 2010 eller etterisolert."
+        }
+      },
+      "zones": {
+        "title": "Fant i huset ditt",
+        "description": "{found}\n\nVelg hvilke termostater Heat Planner skal styre. Termostater uten føler styres i prosent. Alt kan endres senere.",
+        "data": {
+          "zones": "Soner"
+        }
+      },
+      "history": {
+        "title": "Lær av historikken",
+        "description": "Heat Planner kan lese de siste 30 dagene fra Home Assistants egen historikk for å lære hvor fort hvert rom varmes opp og kjøles ned, og hvor mye effekt hver varmekilde bruker. Da blir forventet temperatur og kostnadsestimatene mye mer presise. Dataene forlater aldri Home Assistant.",
+        "data": {
+          "use_history": "Bruk historikk til å lære"
+        }
       }
     },
     "abort": {
@@ -42,9 +69,12 @@
       "init": {
         "title": "Heat Planner",
         "menu_options": {
-          "add_zone": "Legg til sone",
+          "discover": "Finn termostater",
+          "add_zone": "Legg til sone manuelt",
           "edit_zone": "Endre sone",
           "remove_zone": "Fjern sone",
+          "house": "Om huset",
+          "history": "Lær av historikken",
           "general": "Pris og tilstedeværelse"
         }
       },
@@ -58,11 +88,12 @@
           "number_entity": "Entitet for varmebehov (%)",
           "temperature_sensor": "Romtemperatursensor (valgfri)",
           "comfort": "Komforttemperatur",
-          "heater_kw": "Effekt på varmeelement"
+          "heater_kw": "Effekt på varmeelement",
+          "power_sensor": "Effektsensor (valgfri)"
         },
         "data_description": {
           "mode": "Velg prosent for termostater uten gulv-/romføler (regulatormodus).",
-          "heater_kw": "Brukes til å anslå energi og kostnad."
+          "heater_kw": "Sett 0 for å måle den fra effektsensoren eller anslå den."
         }
       },
       "zone": {
@@ -74,11 +105,12 @@
           "number_entity": "Entitet for varmebehov (%)",
           "temperature_sensor": "Romtemperatursensor (valgfri)",
           "comfort": "Komforttemperatur",
-          "heater_kw": "Effekt på varmeelement"
+          "heater_kw": "Effekt på varmeelement",
+          "power_sensor": "Effektsensor (valgfri)"
         },
         "data_description": {
           "mode": "Velg prosent for termostater uten gulv-/romføler (regulatormodus).",
-          "heater_kw": "Brukes til å anslå energi og kostnad."
+          "heater_kw": "Sett 0 for å måle den fra effektsensoren eller anslå den."
         }
       },
       "edit_zone": {
@@ -121,6 +153,33 @@
         "data_description": {
           "price_sensor": "En sensor med time-/kvarterspriser i attributtene (Nordpool fra HACS, Tibber, ENTSO-e, Energi Data Service …)."
         }
+      },
+      "house": {
+        "title": "Om huset",
+        "description": "En grov beskrivelse gir en god startmodell for hvor fort rommene varmes opp og kjøles ned. Den forbedres med historikken din hvis du tillater det.",
+        "data": {
+          "house_type": "Boligtype",
+          "insulation": "Isolasjon",
+          "heating_sources": "Oppvarming",
+          "heated_area": "Oppvarmet areal"
+        },
+        "data_description": {
+          "insulation": "Gammel: før ca. 1980 og ikke etterisolert. God: nyere enn ca. 2010 eller etterisolert."
+        }
+      },
+      "history": {
+        "title": "Lær av historikken",
+        "description": "Heat Planner kan lese de siste 30 dagene fra Home Assistants egen historikk for å lære hvor fort hvert rom varmes opp og kjøles ned, og hvor mye effekt hver varmekilde bruker. Da blir forventet temperatur og kostnadsestimatene mye mer presise. Dataene forlater aldri Home Assistant.",
+        "data": {
+          "use_history": "Bruk historikk til å lære"
+        }
+      },
+      "discover": {
+        "title": "Finn nye termostater",
+        "description": "{found}\n\nVelg hvilke termostater Heat Planner skal styre. Termostater uten føler styres i prosent. Alt kan endres senere.",
+        "data": {
+          "zones": "Soner"
+        }
       }
     },
     "error": {
@@ -129,7 +188,8 @@
       "duplicate": "Det finnes allerede en sone med dette navnet."
     },
     "abort": {
-      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp."
+      "no_nordpool": "Nord Pool-integrasjonen er ikke satt opp.",
+      "nothing_new": "Fant ingen nye termostater."
     }
   },
   "selector": {
@@ -163,6 +223,33 @@
         "4": "Fredag",
         "5": "Lørdag",
         "6": "Søndag"
+      }
+    },
+    "house_type": {
+      "options": {
+        "apartment": "Leilighet",
+        "terraced": "Rekkehus / tomannsbolig",
+        "detached": "Enebolig",
+        "cabin": "Hytte"
+      }
+    },
+    "insulation": {
+      "options": {
+        "old": "Gammel",
+        "normal": "Normal",
+        "good": "God",
+        "passive": "Passivhus"
+      }
+    },
+    "heating_sources": {
+      "options": {
+        "floor_electric": "Elektrisk gulvvarme",
+        "floor_water": "Vannbåren gulvvarme",
+        "panel_heaters": "Panelovner",
+        "heat_pump_air_air": "Luft-til-luft-varmepumpe",
+        "heat_pump_air_water": "Luft-til-vann-varmepumpe",
+        "district_heating": "Fjernvarme",
+        "wood_stove": "Vedovn"
       }
     }
   },

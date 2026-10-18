@@ -38,6 +38,10 @@ CONF_NUMBER: Final = "number_entity"
 CONF_TEMP_SENSOR: Final = "temperature_sensor"
 CONF_HEATER_KW: Final = "heater_kw"
 CONF_COMFORT: Final = "comfort"
+CONF_POWER_SENSOR: Final = "power_sensor"
+CONF_HOUSE: Final = "house"
+CONF_USE_HISTORY: Final = "use_history"
+HISTORY_DAYS: Final = 30
 
 # Tunable zone settings (stored in .storage, editable from the card)
 TUNABLE_ZONE: Final = (

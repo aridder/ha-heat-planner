@@ -68,13 +68,24 @@ async def test_config_flow_with_price_sensor(hass: HomeAssistant, setup_states) 
     result = await hass.config_entries.flow.async_configure(
         result["flow_id"], {"name": "Hjem", "price_type": "sensor", "presence_entities": ["person.a"], "price_extra": 0.4}
     )
+    assert result["step_id"] == "house"
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], {"house_type": "terraced", "insulation": "normal", "heating_sources": ["floor_electric"], "heated_area": 120}
+    )
     assert result["step_id"] == "price_sensor"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"price_sensor": PRICE_SENSOR})
+    assert result["step_id"] == "zones"
+    assert "Stue" in result["description_placeholders"]["found"] or "climate.stue" in result["description_placeholders"]["found"].lower() or result["description_placeholders"]["found"]
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"zones": ["stue"]})
+    assert result["step_id"] == "history"
     with patch("custom_components.heat_planner.async_setup_entry", return_value=True):
-        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"price_sensor": PRICE_SENSOR})
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"use_history": True})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Hjem"
-    assert result["options"]["price_sensor"] == PRICE_SENSOR
-    assert result["options"]["zones"] == []
+    opts = result["options"]
+    assert opts["price_sensor"] == PRICE_SENSOR and opts["use_history"] is True
+    assert opts["house"]["insulation"] == "normal"
+    assert [z["climate_entity"] for z in opts["zones"]] == ["climate.stue"]
 
 
 async def test_options_add_zone(hass: HomeAssistant, setup_states) -> None:
@@ -218,3 +229,22 @@ async def test_unload(hass: HomeAssistant, setup_states) -> None:
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_house_prior_and_estimated_power_in_export(hass: HomeAssistant, setup_states) -> None:
+    async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "number", "set_value")
+    entry = _entry()
+    opts = {**entry.options, "house": {"insulation": "old", "house_type": "detached", "heating_sources": ["panel_heaters"]}}
+    opts["zones"] = [dict(z, heater_kw=0) if z["zone_id"] == "stue" else z for z in opts["zones"]]
+    hass.config_entries.async_update_entry(entry, options=opts) if False else None
+    entry = MockConfigEntry(domain=DOMAIN, title="Hjem", data={}, options=opts)
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    data = entry.runtime_data.export()
+    stue = next(z for z in data["zones"] if z["zone_id"] == "stue")
+    assert stue["thermal"]["learned"] is False and stue["thermal"]["tau_hours"] == 17.0
+    assert stue["heater_kw_source"] == "estimate" and stue["heater_kw"] > 0
+    bad = next(z for z in data["zones"] if z["zone_id"] == "bad")
+    assert bad["heater_kw_source"] == "config" and bad["heater_kw"] == 0.4

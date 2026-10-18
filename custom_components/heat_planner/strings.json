@@ -31,6 +31,33 @@
         "data_description": {
           "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
         }
+      },
+      "house": {
+        "title": "About your home",
+        "description": "A rough description gives a good starting model for how fast rooms heat and cool. It is refined from your history if you allow it.",
+        "data": {
+          "house_type": "Type of home",
+          "insulation": "Insulation",
+          "heating_sources": "Heating",
+          "heated_area": "Heated area"
+        },
+        "data_description": {
+          "insulation": "Old: before ~1980 and not upgraded. Good: newer than ~2010 or upgraded."
+        }
+      },
+      "zones": {
+        "title": "Found in your home",
+        "description": "{found}\n\nChoose which thermostats Heat Planner should control. Thermostats without a sensor are controlled in percent. You can change everything later.",
+        "data": {
+          "zones": "Zones"
+        }
+      },
+      "history": {
+        "title": "Learn from history",
+        "description": "Heat Planner can read the last 30 days from Home Assistant's own history to learn how fast each room heats up and cools down, and how much power each heater uses. This makes the expected temperature and the cost estimates much more accurate. The data never leaves your Home Assistant.",
+        "data": {
+          "use_history": "Use history to learn"
+        }
       }
     },
     "abort": {
@@ -42,9 +69,12 @@
       "init": {
         "title": "Heat Planner",
         "menu_options": {
-          "add_zone": "Add zone",
+          "discover": "Find thermostats",
+          "add_zone": "Add zone manually",
           "edit_zone": "Edit zone",
           "remove_zone": "Remove zone",
+          "house": "About your home",
+          "history": "Learn from history",
           "general": "Price & presence"
         }
       },
@@ -58,11 +88,12 @@
           "number_entity": "Heating demand (%) entity",
           "temperature_sensor": "Room temperature sensor (optional)",
           "comfort": "Comfort temperature",
-          "heater_kw": "Heater power"
+          "heater_kw": "Heater power",
+          "power_sensor": "Power sensor (optional)"
         },
         "data_description": {
           "mode": "Use percent for thermostats without a floor/room sensor (regulator mode).",
-          "heater_kw": "Used to estimate energy and cost."
+          "heater_kw": "Set 0 to measure it from the power sensor or estimate it."
         }
       },
       "zone": {
@@ -74,11 +105,12 @@
           "number_entity": "Heating demand (%) entity",
           "temperature_sensor": "Room temperature sensor (optional)",
           "comfort": "Comfort temperature",
-          "heater_kw": "Heater power"
+          "heater_kw": "Heater power",
+          "power_sensor": "Power sensor (optional)"
         },
         "data_description": {
           "mode": "Use percent for thermostats without a floor/room sensor (regulator mode).",
-          "heater_kw": "Used to estimate energy and cost."
+          "heater_kw": "Set 0 to measure it from the power sensor or estimate it."
         }
       },
       "edit_zone": {
@@ -121,6 +153,33 @@
         "data_description": {
           "price_sensor": "A sensor with hourly/15-min prices in its attributes (Nordpool HACS, Tibber, ENTSO-e, Energi Data Service…)."
         }
+      },
+      "house": {
+        "title": "About your home",
+        "description": "A rough description gives a good starting model for how fast rooms heat and cool. It is refined from your history if you allow it.",
+        "data": {
+          "house_type": "Type of home",
+          "insulation": "Insulation",
+          "heating_sources": "Heating",
+          "heated_area": "Heated area"
+        },
+        "data_description": {
+          "insulation": "Old: before ~1980 and not upgraded. Good: newer than ~2010 or upgraded."
+        }
+      },
+      "history": {
+        "title": "Learn from history",
+        "description": "Heat Planner can read the last 30 days from Home Assistant's own history to learn how fast each room heats up and cools down, and how much power each heater uses. This makes the expected temperature and the cost estimates much more accurate. The data never leaves your Home Assistant.",
+        "data": {
+          "use_history": "Use history to learn"
+        }
+      },
+      "discover": {
+        "title": "Find new thermostats",
+        "description": "{found}\n\nChoose which thermostats Heat Planner should control. Thermostats without a sensor are controlled in percent. You can change everything later.",
+        "data": {
+          "zones": "Zones"
+        }
       }
     },
     "error": {
@@ -129,7 +188,8 @@
       "duplicate": "A zone with this name already exists."
     },
     "abort": {
-      "no_nordpool": "The Nord Pool integration is not set up."
+      "no_nordpool": "The Nord Pool integration is not set up.",
+      "nothing_new": "No new thermostats found."
     }
   },
   "selector": {
@@ -163,6 +223,33 @@
         "4": "Friday",
         "5": "Saturday",
         "6": "Sunday"
+      }
+    },
+    "house_type": {
+      "options": {
+        "apartment": "Apartment",
+        "terraced": "Terraced / semi-detached",
+        "detached": "Detached house",
+        "cabin": "Cabin"
+      }
+    },
+    "insulation": {
+      "options": {
+        "old": "Old",
+        "normal": "Normal",
+        "good": "Good",
+        "passive": "Passive house"
+      }
+    },
+    "heating_sources": {
+      "options": {
+        "floor_electric": "Electric floor heating",
+        "floor_water": "Water-based floor heating",
+        "panel_heaters": "Panel heaters",
+        "heat_pump_air_air": "Air-to-air heat pump",
+        "heat_pump_air_water": "Air-to-water heat pump",
+        "district_heating": "District heating",
+        "wood_stove": "Wood stove"
       }
     }
   },

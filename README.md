@@ -34,8 +34,12 @@ Prices only shift *when* heat is used; comfort stays where you put it. Choose a 
 
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/aridder/ha-heat-planner` as *Integration*.
 2. Install **Heat Planner** and restart Home Assistant.
-3. **Settings → Devices & services → Add integration → Heat Planner.** Pick a price source, who counts as "home" and a weather entity.
-4. **Configure → Add zone** for each heated room.
+3. **Settings → Devices & services → Add integration → Heat Planner.** Setup walks you through:
+   - **Price & presence** – price source, who counts as "home", a weather entity.
+   - **About your home** – type of home, insulation, heated area and heating (electric or water-based floor heating, panel heaters, heat pumps, district heating, wood stove). This gives each room a sensible starting model.
+   - **Found in your home** – Heat Planner lists the thermostats it finds (vehicles and other non-room climate entities are skipped), the room sensor and power meter next to each, and whether it should be controlled by temperature or, for thermostats without a sensor, by percent. Pick the ones to control.
+   - **Learn from history** – with your permission it reads the last 30 days from Home Assistant's own recorder to learn how fast each room heats and cools and how much power each heater draws. Nothing leaves your Home Assistant. You can turn this off later.
+4. Later: **Configure → Find thermostats** picks up new ones, **About your home** and **Learn from history** can be changed at any time.
 5. Add the card to a dashboard:
 
 ```yaml

@@ -23,6 +23,10 @@ from .const import (
     CONF_CLIMATE,
     CONF_COMFORT,
     CONF_HEATER_KW,
+    CONF_HOUSE,
+    CONF_POWER_SENSOR,
+    CONF_USE_HISTORY,
+    HISTORY_DAYS,
     CONF_MODE,
     CONF_NAME,
     CONF_NUMBER,
@@ -54,6 +58,7 @@ from .planner import (
     hourly_prices,
     scheduled_value,
 )
+from .discovery import default_heater_kw, thermal_prior
 from .prices import PriceSource
 
 _LOGGER = logging.getLogger(__name__)
@@ -132,12 +137,14 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             )
         else:
             base = dict(comfort=float(cfg.get(CONF_COMFORT, 21.0)))
-        base["heater_kw"] = float(cfg.get(CONF_HEATER_KW, 1.0))
+        base["heater_kw"] = self.heater_kw(zone_id)
         settings = {k: v for k, v in st.get("settings", {}).items() if k in TUNABLE_ZONE}
-        thermal = ThermalModel(**{
+        stored = ThermalModel(**{
             k: v for k, v in st.get("thermal", {}).items()
             if k in {f.name for f in fields(ThermalModel)}
         })
+        # until something is learned, start from what the house description suggests
+        thermal = stored if stored.learned else thermal_prior(self.options.get(CONF_HOUSE))
         return ZoneConfig(
             zone_id=zone_id,
             name=cfg.get(CONF_NAME, zone_id),
@@ -145,6 +152,17 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             thermal=thermal,
             **{**base, **settings},
         )
+
+    def heater_kw(self, zone_id: str) -> float:
+        """Configured power, else measured, else a guess from the house description."""
+        cfg = next((z for z in self.zone_configs if z[CONF_ZONE_ID] == zone_id), {})
+        kw = _float(cfg.get(CONF_HEATER_KW)) or 0.0
+        if kw > 0:
+            return kw
+        learned = _float(self.zone_state(zone_id).get("learned_kw"))
+        if learned:
+            return learned
+        return default_heater_kw(self.options.get(CONF_HOUSE))
 
     def rules(self) -> PriceRules:
         r = {k: v for k, v in self.state.get("rules", {}).items() if k in TUNABLE_RULES}
@@ -531,19 +549,27 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     # ------------------------------------------------------------------ learning
 
     async def async_learn(self) -> None:
-        """Fit the thermal model of each setpoint zone from the last 14 days."""
+        """Fit the thermal model and heater power of each zone from recorder history."""
+        if not self.options.get(CONF_USE_HISTORY, False):
+            return
         try:
             from homeassistant.components.recorder import get_instance, history
         except ImportError:  # recorder not loaded
             return
         end = dt_util.utcnow()
-        start = end - timedelta(days=14)
+        start = end - timedelta(days=HISTORY_DAYS)
         weather = self.options.get(CONF_WEATHER)
         changed = False
         for cfg in self.zone_configs:
             zid = cfg[CONF_ZONE_ID]
+            power = cfg.get(CONF_POWER_SENSOR)
+            if power:
+                kw = await self._learn_power(power, start, end)
+                if kw:
+                    self.zone_state(zid)["learned_kw"] = kw
+                    changed = True
             climate = cfg.get(CONF_CLIMATE)
-            if not climate:
+            if not climate or cfg.get(CONF_MODE) == MODE_PERCENT and not cfg.get(CONF_TEMP_SENSOR):
                 continue
             ids = [climate] + ([weather] if weather else [])
             sensor = cfg.get(CONF_TEMP_SENSOR)
@@ -561,7 +587,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             samples = await self.hass.async_add_executor_job(
                 _samples_from_history, hist, climate, sensor, weather, start, end
             )
-            prior = self.zone(zid).thermal
+            prior = thermal_prior(self.options.get(CONF_HOUSE))
             model = fit_thermal(samples, prior)
             self.zone_state(zid)["thermal"] = asdict(model)
             changed = True
@@ -569,6 +595,28 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if changed:
             await self._save()
             await self.async_request_refresh()
+
+    async def _learn_power(self, entity_id: str, start: datetime, end: datetime) -> float | None:
+        """Heater power = the typical 'on' level seen on its power sensor (kW)."""
+        from homeassistant.components.recorder import get_instance, history
+
+        try:
+            hist = await get_instance(self.hass).async_add_executor_job(
+                lambda: history.state_changes_during_period(
+                    self.hass, start, end, entity_id, no_attributes=False
+                )
+            )
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("No power history for %s: %s", entity_id, err)
+            return None
+        states = hist.get(entity_id, [])
+        vals = sorted(v for v in (_float(x.state) for x in states) if v and v > 5)
+        if len(vals) < 10:
+            return None
+        unit = (states[-1].attributes.get("unit_of_measurement") or "W").lower()
+        p90 = vals[int(len(vals) * 0.9)]
+        kw = p90 / 1000 if unit == "w" else p90
+        return round(kw, 2) if 0.02 <= kw <= 50 else None
 
     # ------------------------------------------------------------------ export
 
@@ -595,6 +643,11 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     "number_entity": cfg.get(CONF_NUMBER),
                     "settings": {k: getattr(zc, k) for k in TUNABLE_ZONE},
                     "thermal": asdict(zc.thermal),
+                    "heater_kw": zc.heater_kw,
+                    "heater_kw_source": (
+                        "config" if (_float(cfg.get(CONF_HEATER_KW)) or 0) > 0
+                        else "measured" if st.get("learned_kw") else "estimate"
+                    ),
                     "schedule": {str(k): v for k, v in self.schedule(zid).items()},
                     "overrides": deepcopy(self.overrides(zid)),
                     "auto": st.get("auto", True),
@@ -612,6 +665,8 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "price_extra": extra,
             "rules": asdict(self.rules()),
             "away": self.away,
+            "history": bool(self.options.get(CONF_USE_HISTORY, False)),
+            "house": self.options.get(CONF_HOUSE),
             "outdoor_now": self.outdoor_now(),
             "prices": [
                 {"start": h.isoformat(), "price": round(p, 4), "level": levels.get(h)}
