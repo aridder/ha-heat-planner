@@ -1,6 +1,7 @@
 """Hand-written methodology and findings, placed at the top of ``RESULTS.md`` by ``report.py``.
 
-The numbers quoted here are from ``results.json`` (seeds 1–3); re-check them after a re-run.
+The numbers quoted here are from ``results.json`` (seeds 1–3; round 2 also fresh seeds 4–5, in its
+``round2`` block); re-check them after a re-run.
 """
 
 FINDINGS = r"""
@@ -64,7 +65,78 @@ on the **true** room temperatures and the **true** house energy.
 | `roommind` | model-based optimal start to the schedule, no prices | coasting variant tested; defaults kept |
 | `heat_planner_*` | ours: rules / optimiser / optimiser + capacity limiting, integration defaults | not tuned |
 
-## Plain-language findings
+## Round 2: capacity planned with the heating
+
+**Result:** `heat_planner_opt_cap` (optimiser + capacity limiting with the house meter) now has
+the best value score in **all 9 cells** on the reported seeds 1–3 *and* on fresh seeds 4–5 that
+were never looked at during development (tuning and development on seeds 101–102 only; the
+competitors keep their round-1 tuning). Its comfort deficit (> 0.3 °C) is lower than or equal
+to the best competitor's (within 0.1 °C·h) in every cell. Two cells are ties in all but name:
+**January Norgespris** (+1 kr on seeds 1–3, +1 kr on 4–5 – the same strategy as RoomMind, the
+capacity step out of reach at −15 °C) and **January with strømstøtte** (+7 kr). The table
+"Round 2 per cell" below has the numbers.
+
+What changed (all in the integration, mirrored by `tools.sim`):
+
+1. **Capacity budgets in the plan (`control.plan_peaks`, optimiser only).** The house cap minus
+   a *high* estimate of the rest of the house (90th percentile of the meter minus our own
+   logged heating, `energy.rest_of_house`/`log_heating`) is each hour's heating budget; where
+   the planned rooms exceed it, the excess becomes a per-zone `kw_cap` (lowest priority first)
+   and those zones are planned again, so the floors store heat in the hours with headroom and
+   coast through the cooking peak. Budgets are kept only on days where they lower the day's
+   peak, and of the plans without budgets, with all and with the useful ones the one with the
+   least overshoot wins – budgets can never raise the house peak. Protected hours get a budget
+   too (it can only remove pre-heat: April's cheap solar hour had every room on at once).
+2. **Aim for the lower step while it is reachable (`peak.choose_limit`, `energy.peak_floor`)**:
+   the month's best case (the rest of the house plus the heating stored heat cannot cover) must
+   fit under the lower step; otherwise the current step is defended as before.
+3. **Comfort first in budget hours:** an occupied hour that the schedule holds is never planned
+   below its schedule for a budget (a thermostat 0.5 °C lower lets the room sag 0.8 °C before it
+   restarts); the plan aims 0.3 °C above the reference in budget hours and the thermostat is set
+   0.5 °C lower only where the plan coasts well above it (`planner._coast`). Under flat prices
+   (Norgespris) a budget changes only the hours that store heat for it (4 h + dead time) – before,
+   such a run re-shaped the whole day.
+4. **Live guard:** the first 10 minutes of an hour ignore the previous hour's average (rooms
+   were set back at 19:00 for an hour that ended a kilowatt under the cap); a room within
+   0.2 °C of the "too cold" line is not set back (it flapped: 36 writes in an evening).
+5. **Fixes found on the way:** the warm-up must *hold* the new target through the floor's dead
+   time (−15 °C mornings: the living room 19.9 °C an hour after the step); a flat rest of the
+   horizon keeps the schedule (the rules had lowered "expensive" evening hours with no comfort
+   check, judged on the whole day's prices); no extra penalty for warmth above the schedule
+   (the model already pays the extra losses; the penalty kept pre-heating out of January's
+   cheap hours); percent zones move heat into the 3 hours just before a cut and never into the
+   live guard; a thermostat that reports "heating" ~100 % of the time (seen in the real house,
+   below) no longer teaches the model a weak heater.
+
+Honest notes:
+
+* **Writes:** 19–37 per day for the whole house (4 zones: 5–9 per zone; round 1: 10–30), EMHASS
+  46–92. Capacity budgets add writes where they act (Oct/Apr spot ≈ 34 vs 26).
+* **January with strømstøtte got worse than round 1** (1731 → 1747, still +7 over RoomMind):
+  round 1's bathroom shifting gave the heat back in the day's cheapest (night) hours, which
+  happened to warm the bathroom in that cell – the same mechanism cost January spot 46 °C·h. The
+  new shifting is comfort-neutral; the bathroom (no sensor) now ends where the schedule leaves
+  it in every strategy.
+* `heat_planner_opt` (optimiser *without* capacity limiting) also changed: in April spot it lost
+  a capacity step on one tuning seed it had kept before (no budgets keep pre-heating in check).
+  The capacity limiting needs the house meter; without one this round changes little.
+* Run time: about 40 CPU s per 14-day run with capacity budgets (≈ 0.12 s per hourly re-plan of
+  4 zones incl. up to 3 budget rounds), twice round 1.
+* Not done: a terminal value for heat stored at the end of the horizon (the 36 h horizon and
+  the warm-up reference made it unnecessary here), solar-aware cutting beyond the April budget.
+
+**Real house (Oslo, 18–20 October, 48 h):** ~6 writes per zone and day, rooms within ±0.5 °C
+of target, the month's top-3 4.88 kW held under the 5 kW step (2.6 kW peak on the 20th) – in
+line with the benchmark. The kitchen floor thermostat reports `hvac_action: heating` in ~100 %
+of the hours while holding 23–24 °C (a floor-sensor thermostat pulsing its floor): such a duty
+says nothing about the heater, so `planner.fit_thermal` now keeps the prior heater power when
+≥ 90 % of the samples are "heating" (`duty_saturated`) instead of learning a heater that barely
+holds the room at full power (which would have planned hours of warm-up and booked 1.2 kW in
+every hour of the capacity budget).
+
+## Round 1 findings (before round 2)
+
+Point 4's capacity item is what round 2 addressed; the rest still describes the strategies.
 
 1. **Against the price add-ons (PriceAnalyzer, nordpool_diff, cheapest hours, Sparegris),
    Heat Planner wins every season and contract, also against their tuned settings** – by
@@ -102,7 +174,7 @@ on the **true** room temperatures and the **true** house energy.
    the schedule plus its warm-up – the same result as RoomMind. Tools that act on the grid spread
    anyway (nordpool_diff normalises the spread away; cheapest hours) lose comfort for ~nothing.
 
-## Changes made to the engine (seeds 1–3, before → after)
+## Round 1 changes to the engine (seeds 1–3, before → after)
 
 Found on the development seeds, checked on the held-out reported seeds:
 
@@ -153,5 +225,6 @@ the morning heating and lowers peaks).
   the ranking between them can change.
 * The value score's 2 kr/°C·h and 0.3 °C band are choices; costs, both deficits and the
   strict value are all in the tables.
-* Run time: about 14 minutes on 2 cores (≈ 1600 CPU s), so under 10 minutes from 4 cores.
+* Run time: see the header (round 1: about 14 minutes on 2 cores; round 2's capacity budgets
+  doubled Heat Planner's share).
 """

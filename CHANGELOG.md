@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Capacity tariff planned with the heating (benchmark round 2)
+- **Capacity budgets in the plan (optimiser + house meter):** each hour's heating budget is the cap minus a high estimate of the rest of the house (the meter minus Heat Planner's own logged heating). Rooms over budget are planned again with a kW limit, so floors store heat before the cooking peak and coast through it. Budgets are dropped again where they do not lower the day's peak, and can never raise it.
+- **Lower step when reachable:** the planner aims for the cheaper capacity step while the month can still reach it, and defends the current one otherwise.
+- **Comfort first:** an occupied room is never planned below its schedule for the capacity step; under Norgespris a budget only changes the few hours that store heat for it.
+- **Live guard:** ignores the previous hour's average in the first minutes of an hour, and does not set back a room that is close to "too cold" (no more flapping).
+- **Warm-up** now also holds the new target through a slow floor's dead time; a flat rest of the day keeps the schedule; pre-heating in cheap hours is no longer held back by an extra "too warm" penalty.
+- **Model:** a thermostat that reports "heating" nearly all the time (floor-sensor thermostats that pulse the floor) no longer teaches the model a weak heater.
+- Benchmark (`tools/bench/RESULTS.md`, round 2): best value score in all 9 season × contract cells, on the reported and on fresh seeds.
+
 ## 0.4.0
 
 The first published release. It contains everything since 0.1.0.
