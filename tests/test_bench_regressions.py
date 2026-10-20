@@ -250,3 +250,30 @@ def test_plan_peaks_never_returns_a_higher_overshoot():
         return sum(max(0.0, v) for v in day_peaks(plans, caps, base).values())
 
     assert over(out) <= over(before) + 1e-9
+
+
+def test_warmup_holds_the_new_target_through_the_dead_time():
+    """−15 °C weekend morning: at 05:00 the floor still held 21 °C on heat already in transit,
+    so the 07:00 step counted as reached and no warm-up was planned – the living room then
+    sagged to 19.9 °C at 08:00 with the heater on since 07:00 (2 h dead time)."""
+    z = ZoneConfig(zone_id="stue", name="Stue", heater_kw=2.0, warmup=True,
+                   thermal=ThermalModel(gross_rate=1.25, tau_hours=44.0, learned=True, lag_hours=2.0))
+    sched = {wd: [-2.0] * 7 + [0.0] * 16 + [-2.0] for wd in range(7)}
+    start = DAY + timedelta(hours=5)
+    p = build_plan(z, sched, {}, {}, PriceRules(), start, 12, room_temp=21.0, outdoor_default=-18.0)
+    by = {h.start.hour: h for h in p.hours}
+    assert by[5].warmup == 21.0 or by[6].warmup == 21.0
+    assert min(by[h].predicted for h in (7, 8, 9)) >= 21.0 - 0.15
+
+
+def test_flat_rest_of_horizon_keeps_the_schedule():
+    """The rules classify whole days: after a dear morning the evening was still 'expensive'
+    and lowered 1 °C with no comfort check although the rest of the horizon was flat
+    (strømstøtte, cold spell: the kitchen 1 °C under its schedule for three cooking hours)."""
+    z = _stue()
+    start = DAY + timedelta(hours=12)
+    prices = {DAY + timedelta(hours=i): (2.0 if 6 <= i < 8 else 1.0 + 0.02 * (i % 24 in (17, 18, 19)))
+              for i in range(24)}
+    p = build_plan(z, FLAT, {}, prices, PriceRules(), start, 12, room_temp=21.0, outdoor_default=-10.0,
+                   method="optimize")
+    assert all(h.target == h.scheduled for h in p.hours), [(h.start.hour, h.target, h.reasons) for h in p.hours]
