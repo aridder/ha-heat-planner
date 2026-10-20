@@ -48,6 +48,13 @@ const hass = {
   callWS(msg) {
     window.__sent.push(msg);
     if (msg.type === "heat_planner/preview") return Promise.resolve(zoneById[msg.zone_id].plan);
+    if (msg.type === "heat_planner/history") {
+      // the example history covers 48 h; shorter ranges are its tail
+      const H = MOCK.history, n = msg.hours + 1;
+      if (Q.get("histfail")) return Promise.reject({ code: "home_assistant_error", message: "History unavailable" });
+      return Promise.resolve({ ...H, hours: msg.hours, start: H.zones[0].hours.at(-n).start,
+        zones: H.zones.map((z) => ({ ...z, hours: z.hours.slice(-n) })), home: H.home.slice(-n) });
+    }
     return Promise.resolve(entry);  // save/settings answer with the entry's export, like the integration
   },
 };

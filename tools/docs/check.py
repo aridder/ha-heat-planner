@@ -150,6 +150,72 @@ def main() -> None:
                         pg.screenshot(path=str(shots / f"help-{tag}.png"), full_page=True)
                     fails += [f"{tag}: guide console: {e}" for e in err]
                     ctx.close()
+        # The look-back view (Siste 24 t / Last 48 h): light/dark × nb/en × 360/820 px
+        for lang in ("en", "nb"):
+            shoot.LANG = lang
+            d = mock("spot")
+            for theme in ("light", "dark"):
+                for width in (360, 820):
+                    for rng, zone in (("24", 0), ("48", 2)):
+                        tag = f"past-{lang}-{theme}-{width}-{rng}{'-pct' if zone else ''}"
+                        ctx, pg, err = open_page(b, d, width, f"&theme={theme}")
+                        if zone:
+                            pg.evaluate(f"{CARD}.querySelectorAll('[role=tab]')[{zone}].click()")
+                            pg.wait_for_timeout(80)
+                        pg.evaluate(f"{CARD}.querySelector('[data-fk=\"range:{rng}\"]').click()")
+                        pg.wait_for_timeout(250)
+                        st = pg.evaluate(f"""() => {{ const r = {CARD};
+                            return {{ pressed: r.querySelector('[data-fk="range:{rng}"]').getAttribute('aria-pressed'),
+                              act: !!r.querySelector('path.act'), label: r.querySelector('.chartwrap')?.getAttribute('aria-label') || '',
+                              summary: r.querySelector('.summary')?.textContent || '', bars: r.querySelectorAll(".chartwrap svg .pbar").length }}; }}""")
+                        check(st["pressed"] == "true", f"{tag}: range button not pressed")
+                        check(st["act"], f"{tag}: no measured line")
+                        check(("history" in st["label"]) or ("historikk" in st["label"]), f"{tag}: chart label {st['label']!r}")
+                        check(len(st["summary"]) > 20, f"{tag}: no summary ({st['summary']!r})")
+                        check(st["bars"] > int(rng) // 2, f"{tag}: faded price bars missing")
+                        if not zone:
+                            check(pg.evaluate(f"{CARD}.querySelectorAll('.mkr .tri').length") >= 1, f"{tag}: no capacity markers")
+                        check(pg.evaluate(OVERFLOW_JS) <= 0, f"{tag}: page overflows horizontally")
+                        for c in pg.evaluate(CONTRAST_JS, "heat-planner-card"):
+                            fails.append(f"{tag}: contrast {c}")
+                        if width == 360:
+                            for sm in pg.evaluate(TARGETS_JS, "heat-planner-card"):
+                                fails.append(f"{tag}: small target {sm}")
+                        if shots:
+                            pg.locator("heat-planner-card").screenshot(path=str(shots / f"{tag}.png"))
+                        fails += [f"{tag}: console: {e}" for e in err]
+                        ctx.close()
+
+            # keyboard in the past view: the tooltip moves, the live region reads the hour, Enter doesn't edit
+            ctx, pg, err = open_page(b, d, 820)
+            pg.evaluate(f"{CARD}.querySelector('[data-fk=\"range:24\"]').click()")
+            pg.wait_for_timeout(250)
+            pg.evaluate(f"{CARD}.querySelector('.chartwrap').focus()")
+            pg.keyboard.press("ArrowLeft")
+            pg.wait_for_timeout(80)
+            pg.keyboard.press("ArrowLeft")
+            pg.wait_for_timeout(120)
+            live = pg.evaluate(f"{CARD}.querySelector('[aria-live]').textContent")
+            word = "faktisk" if lang == "nb" else "measured"
+            check(word in live and "kWh" in live and ":" in live, f"past keyboard {lang}: live region {live!r}")
+            check(bool(pg.evaluate(f"{CARD}.querySelector('.tip')?.textContent")), f"past keyboard {lang}: no tooltip")
+            pg.keyboard.press("Enter")
+            pg.wait_for_timeout(150)
+            check(not pg.evaluate(f"!!{CARD}.querySelector('.editor')"), f"past keyboard {lang}: Enter started editing")
+            pg.evaluate(f"{CARD}.querySelector('[data-fk=\"range:plan\"]').click()")
+            pg.wait_for_timeout(150)
+            check(not pg.evaluate(f"!!{CARD}.querySelector('path.act')"), f"past {lang}: Plan did not return to the plan")
+            fails += [f"past keyboard {lang}: console: {e}" for e in err]
+            ctx.close()
+
+        # history unavailable: an error notice with a retry button, no console errors
+        ctx, pg, err = open_page(b, d, 360, "&histfail=1")
+        pg.evaluate(f"{CARD}.querySelector('[data-fk=\"range:24\"]').click()")
+        pg.wait_for_timeout(250)
+        check(pg.evaluate(f"!!{CARD}.querySelector('button[data-fk=histretry]')"), "past: no retry after a failed load")
+        fails += [f"past failure: console: {e}" for e in err]
+        ctx.close()
+
         shoot.LANG = "en"
         d = mock("spot")
 

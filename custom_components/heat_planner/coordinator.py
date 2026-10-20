@@ -69,6 +69,7 @@ from .energy import (
     plan_caps,
     tariff_from_options,
 )
+from .history import HistoryLog
 from .learning import samples_from_history
 from .insights import (
     ALERT_EXTREME_TOMORROW,
@@ -160,6 +161,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._applied: dict[str, dict[str, Any]] = {}
         self._safety: dict[str, bool] = {}
         self._unsubs: list = []
+        self.history = HistoryLog(hass, entry.entry_id)  # look-back view (history.py)
 
     # ------------------------------------------------------------------ config
 
@@ -294,6 +296,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                     fresh["learned_kw"] = learned_kw
             self.zone_state(zid)["mode"] = mode
         await self._save()
+        await self.history.async_load()
 
         watch = list(self.options.get(CONF_PRESENCE, []))
         if watch:
@@ -322,6 +325,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             unsub()
         self._unsubs.clear()
         await self._save()  # flush savings/alert book-keeping before a reload
+        await self.history.async_save()
         await super().async_shutdown()
 
     async def _save(self) -> None:
@@ -354,6 +358,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             await self._apply(zid, plan)
         if self.peak_state is not None:
             self.peak_state.shed = sorted(self._shed)
+        self.history.after_update(self)
         self.async_update_listeners()
 
     async def _on_hour(self, now: datetime) -> None:
@@ -618,6 +623,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             self._update_savings()
         except Exception:  # noqa: BLE001 - book-keeping must never stop control
             _LOGGER.exception("Savings/alert book-keeping failed")
+        self.history.after_update(self)
         async_check_issues(self)
         self._last_ok = dt_util.now()
         return {"updated": self._last_ok.isoformat()}
@@ -1156,7 +1162,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "price_extra_configured": extra,
             "rules": asdict(self.rules()),
             "optimize": self.optimize,
-            "features": ["feedback"],
+            "features": ["feedback", "history_log"],
             **({"arrival": self._arrival_export()} if self.options.get(CONF_USE_HISTORY) else {}),
             "tariff": self._tariff_export(),
             "savings": {

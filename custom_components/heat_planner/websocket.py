@@ -34,6 +34,7 @@ def async_register_websocket(hass: HomeAssistant) -> None:
     websocket_api.async_register_command(hass, ws_settings)
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_feedback)
+    websocket_api.async_register_command(hass, ws_history)
 
 
 @websocket_api.websocket_command({vol.Required("type"): f"{DOMAIN}/get"})
@@ -234,3 +235,20 @@ async def ws_feedback(
         return
     message = await coord.async_feedback(msg["zone"], msg["kind"])
     connection.send_result(msg["id"], {"message": message})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/history",
+        vol.Required("entry_id"): str,
+        vol.Optional("hours", default=24): vol.All(vol.Coerce(int), vol.Range(min=1, max=168)),
+    }
+)
+@callback
+def ws_history(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict) -> None:
+    """What actually happened, hour by hour (kept out of the regular export to keep that small)."""
+    coord = _get(hass, msg["entry_id"])
+    if coord is None:
+        connection.send_error(msg["id"], "not_found", "Unknown entry")
+        return
+    connection.send_result(msg["id"], coord.history.export(coord, msg["hours"]))

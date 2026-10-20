@@ -183,6 +183,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
     """Delete the stored schedules and learned models."""
     async_clear_issues(hass, entry.entry_id)
     await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}").async_remove()
+    await Store(hass, 1, f"{DOMAIN}.{entry.entry_id}.history").async_remove()
 
 
 async def async_remove_config_entry_device(

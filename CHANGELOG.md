@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Look back
+- **History in the card:** "Plan / Last 24 h / Last 48 h" above the chart. Looking back shows what actually happened hour by hour: the target and mode that were applied (and why), the measured room temperature (solid) against the prediction (dashed), faded prices, markers for manual changes, capacity set-backs and off hours, and the home's hourly energy against the cap. A summary gives the average against target, hours below target, kWh with an estimated cost and the highest house hour. Percent rooms without a sensor show their heating demand (and on-time, when reported).
+- **Rolling log:** 7 days per room and hour, stored apart from the settings and kept across restarts; after a first start or a gap the last 48 hours are rebuilt from the recorder. Thermostats reporting 0 °C (no floor sensor) are ignored as room temperatures. Both 02:00 hours of the autumn DST change are kept.
+- **API:** websocket command `heat_planner/history` (`entry_id`, `hours` ≤ 168) – the regular export stays small.
+
 ## 0.4.0
 
 The first published release. It contains everything since 0.1.0.

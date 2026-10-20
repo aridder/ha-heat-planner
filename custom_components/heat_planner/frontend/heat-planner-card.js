@@ -86,6 +86,22 @@ const I18N = {
     edEntry: "Heat Planner setup", edZones: "Rooms", edZonesHelp: "Leave all unticked to show every room.",
     edHours: "Hours to show", edHelp: "Show “How it works”", edLoading: "Loading rooms…", edNoData: "Heat Planner isn't set up yet – the card will show every room once it is.",
     hUnit: "h",
+    // look-back view
+    rangeLbl: "Time range", rPlan: "Plan", r24: "Last 24 h", r48: "Last 48 h",
+    histLabel: (z, n) => `Heating history for ${z}, last ${n} hours`,
+    histKeys: "Left and right arrow keys move between hours.",
+    actual: "Measured room temperature", actualShort: "measured", demand: "Heating demand", runtime: "Heater on",
+    histLoading: "Loading history…", histFail: "Couldn't load the history.", retryShort: "Retry",
+    histEmpty: "No history yet – it builds up hour by hour.",
+    flags: { manual: "Changed by hand", paused: "Paused after a manual change", shed: "Set back to stay under the capacity cap",
+      off: "Heating off", disabled: "Automatic control off", safety: "Held above the safety temperature" },
+    mk: { manual: "Manual change", shed: "Capacity cap", off: "Off" },
+    atHour: (c) => c,
+    sumAvg: (a, tg) => `Average ${a} (target ${tg})`, sumAvgPct: (a) => `Average demand ${a}`,
+    sumBelow: (n) => (n === 1 ? "1 h below target" : `${n} h below target`),
+    sumEnergy: (k, c) => `${k} kWh` + (c ? ` ≈ ${c}` : ""),
+    sumTop: (k, cap) => `top house hour ${k} kWh` + (cap ? ` (cap ${cap} kW)` : ""), sumOver: " – over the cap",
+    sumNone: "No measurements in this period yet.",
   },
   nb: {
     loading: "Henter varmeplan …",
@@ -163,6 +179,21 @@ const I18N = {
     edEntry: "Heat Planner-oppsett", edZones: "Rom", edZonesHelp: "La alle stå uten hake for å vise alle rom.",
     edHours: "Timer som vises", edHelp: "Vis «Slik fungerer det»", edLoading: "Henter rom …", edNoData: "Heat Planner er ikke satt opp ennå – kortet viser alle rom når det er gjort.",
     hUnit: "t",
+    rangeLbl: "Tidsrom", rPlan: "Plan", r24: "Siste 24 t", r48: "Siste 48 t",
+    histLabel: (z, n) => `Varmehistorikk for ${z}, siste ${n} timer`,
+    histKeys: "Piltastene venstre og høyre flytter mellom timene.",
+    actual: "Målt romtemperatur", actualShort: "faktisk", demand: "Varmebehov", runtime: "Varme på",
+    histLoading: "Henter historikk …", histFail: "Kunne ikke hente historikken.", retryShort: "Prøv igjen",
+    histEmpty: "Ingen historikk ennå – den bygges opp time for time.",
+    flags: { manual: "Endret for hånd", paused: "Pause etter manuell endring", shed: "Satt ned for å holde effekttaket",
+      off: "Varmen av", disabled: "Automatisk styring av", safety: "Holdt over sikkerhetstemperaturen" },
+    mk: { manual: "Manuell endring", shed: "Effekttak", off: "Av" },
+    atHour: (c) => `Kl. ${c}`,
+    sumAvg: (a, tg) => `Snitt ${a} (mål ${tg})`, sumAvgPct: (a) => `Snitt behov ${a}`,
+    sumBelow: (n) => `${n} t under målet`,
+    sumEnergy: (k, c) => `${k} kWh` + (c ? ` ≈ ${c}` : ""),
+    sumTop: (k, cap) => `høyeste time i huset ${k} kWh` + (cap ? ` (tak ${cap} kW)` : ""), sumOver: " – over taket",
+    sumNone: "Ingen målinger i denne perioden ennå.",
   },
 };
 
@@ -270,6 +301,21 @@ summary::before { content:"+"; display:inline-block; width:1.1em; } details[open
 .loadrow .kwbar.live { opacity:.8; }
 .loadrow .cap { stroke:var(--hp-ext); stroke-width:1; stroke-dasharray:3 3; opacity:.8; }
 .loadrow text { fill:var(--hp-soft); font-size:10px; }
+.rangebar { display:flex; justify-content:flex-end; margin:2px 0 6px; }
+.seg.range { flex-wrap:nowrap; }
+.seg.range button { padding:4px 11px; white-space:nowrap; }
+.act { fill:none; stroke:var(--hp-ink); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.actdot { fill:var(--hp-ink); }
+.past .pbar { opacity:.45; }
+.mkr .ring { fill:var(--hp-bg); stroke:var(--hp-ink); stroke-width:1.4; }
+.mkr .tri { fill:var(--hp-ext); }
+.mkr .sq { fill:var(--hp-off); }
+.legend i.solid { width:16px; height:0; border-top:2px solid var(--hp-ink); border-radius:0; vertical-align:3px; }
+.legend svg { display:inline-block; width:10px; height:10px; vertical-align:-1px; margin-right:5px; overflow:visible; }
+.summary { color:var(--hp-soft); font-size:13px; line-height:1.5; font-variant-numeric:tabular-nums; }
+.summary b { color:var(--hp-ink); font-weight:500; }
+.loadrow .capstep { fill:none; stroke:var(--hp-ext); stroke-width:1; stroke-dasharray:3 3; opacity:.8; }
+.sk.hist { height:170px; margin:0 0 12px; }
 .step .chip { font-size:12px; padding:3px 9px; margin-right:4px; }
 .notice { display:flex; gap:10px; align-items:flex-start; justify-content:space-between; font-size:13px; line-height:1.45; padding:8px 10px 8px 12px; border-radius:10px; margin:0 0 10px;
   color:var(--hp-ink); background:color-mix(in srgb, var(--hp-warn) 12%, transparent); border-left:3px solid var(--hp-warn); }
@@ -299,6 +345,9 @@ summary::before { content:"+"; display:inline-block; width:1.1em; } details[open
   .srow:not(.inline) { grid-template-columns:minmax(0,1fr); }
   .srow .val { text-align:left; min-width:64px; }
   .seg { display:grid; grid-template-columns:1fr 1fr; border-radius:14px; }
+  .seg.range { display:flex; width:100%; border-radius:999px; }
+  .seg.range button { flex:1 1 0; padding:4px 6px; }
+  .rangebar { justify-content:stretch; }
   .zones { gap:14px; margin:0 -12px 10px; padding:0 12px; }
 }
 `;
@@ -353,6 +402,8 @@ class HeatPlannerCard extends HTMLElement {
     this._width = 600;
     this._focusIdx = null;
     this._config = { hours: DEFAULT_HOURS };
+    this._range = "plan"; // "plan" | "24" | "48" – the look-back view
+    this._hist = null; // {key, data, at, loading, error}
     this._onVisible = () => { if (document.visibilityState === "visible" && this._pending) this._update(true); };
   }
 
@@ -562,7 +613,8 @@ class HeatPlannerCard extends HTMLElement {
     if (!e) return JSON.stringify([this._data ? "empty" : "loading", this._error]);
     const { updated, prices, ...rest } = e;
     return JSON.stringify([rest.zones && this.zones, { ...rest, zones: undefined }, this._edit ? prices : null,
-      this._isStale(), Math.floor(Date.now() / 300e3), this._error, this._hassSig()]);
+      this._isStale(), Math.floor(Date.now() / 300e3), this._error, this._hassSig(), this._range,
+      this._hist ? [this._hist.key, this._hist.at, !!this._hist.loading, !!this._hist.error] : null]);
   }
 
   /** Render if anything visible changed (force: always). Deferred while the browser tab is hidden. */
@@ -586,6 +638,138 @@ class HeatPlannerCard extends HTMLElement {
     live.textContent = "";
     clearTimeout(this._liveT);
     this._liveT = setTimeout(() => { live.textContent = text; }, 60);
+  }
+
+  // ------------------------------------------------------------- look-back view
+  get hasHistory() { const f = this.entry?.features; return Array.isArray(f) && f.includes("history_log"); }
+  get past() { return this._range !== "plan" && this.hasHistory && !this._edit; }
+  get pastHours() { return this._range === "48" ? 48 : 24; }
+  _histKey() { return `${this.entry?.entry_id}|${this.pastHours}`; }
+  _histData() { return this._hist?.key === this._histKey() ? this._hist.data : null; }
+  _histZone(z) { return this._histData()?.zones?.find((x) => x.zone_id === z.zone_id) || null; }
+  _setRange(r) {
+    if (r === this._range) return;
+    this._range = r; this._focusIdx = null; this._kbActive = false;
+    this._hideTip();
+    this._update(true);
+  }
+  /** Fetch heat_planner/history for the chosen range (cached for 5 minutes; force: now). */
+  _loadHistory(force = false) {
+    if (!this.past || !this._hass?.callWS || !this.entry) return;
+    const key = this._histKey(), h = this._hist;
+    // after a failure, wait a minute before trying again on its own (the Retry button forces it)
+    if (h?.key === key && (h.loading || (!force && Date.now() - h.at < (h.error ? 60e3 : 300e3)))) return;
+    const keep = h?.key === key ? h.data : null;
+    this._hist = { key, data: keep, at: h?.key === key ? h.at : 0, loading: true };
+    this._hass.callWS({ type: "heat_planner/history", entry_id: this.entry.entry_id, hours: this.pastHours })
+      .then((data) => { if (this._hist?.key === key) { this._hist = { key, data, at: Date.now() }; this._update(true); } })
+      .catch((err) => {
+        if (this._hist?.key !== key) return;
+        this._hist = { key, data: keep, at: Date.now(), error: err?.message || String(err) };
+        this._update(true);
+      });
+  }
+  _rangeBar() {
+    const t = this.t;
+    return el("div", { class: "rangebar" }, el("div", { class: "seg range", role: "group", "aria-label": t.rangeLbl },
+      [["plan", t.rPlan], ["24", t.r24], ["48", t.r48]].map(([k, label]) => el("button", {
+        "aria-pressed": String(this._range === k), "data-fk": `range:${k}`, text: label, onclick: () => this._setRange(k),
+      }))));
+  }
+  _histPlaceholder() {
+    const t = this.t, h = this._hist;
+    if (h?.error && !h.loading) {
+      return el("div", { class: "notice err" }, el("span", { text: t.histFail }),
+        el("button", { class: "btn", text: t.retryShort, "data-fk": "histretry", onclick: () => this._loadHistory(true) }));
+    }
+    return el("div", { class: "sk hist", role: "status", "aria-busy": "true", "aria-label": t.histLoading },
+      el("span", { class: "sr-only", text: t.histLoading }));
+  }
+  /** "Kl. 07" / "07:00" (with the weekday when it isn't today). */
+  _pastWhen(s) {
+    const today = this.dateKey(new Date());
+    const day = s.key !== today ? this.weekdayShort(s.key) : "";
+    return this.lang === "nb" ? (day ? `${day} kl. ${this.fmtAxis(s.hour)}` : this.t.atHour(this.fmtAxis(s.hour)))
+      : `${day ? day + " " : ""}${this.fmtClock(s.hour)}`;
+  }
+  _pastWhy(s) {
+    const t = this.t, f = s.flags || [];
+    const shown = ["manual", "shed", "off", "disabled", "safety", "paused"].filter((k) => f.includes(k) && !(k === "paused" && f.includes("manual")));
+    const reasons = f.includes("paused") || f.includes("disabled") ? [] : (s.reasons || []).filter((r) => r !== "schedule");
+    return [...shown.map((k) => t.flags[k]), ...reasons.map((r) => t.reasons[r] || r)].join(". ");
+  }
+  _pastText(s, z) {
+    const t = this.t, pct = z.mode === "percent";
+    const parts = [];
+    if (s.empty) parts.push("–");
+    else parts.push(s.target == null ? t.modes.off.toLowerCase() : `${t.target.toLowerCase()} ${this.fmtT(s.target, z)}`);
+    if (s.temp != null) parts.push(`${t.actualShort} ${this.fmtT(s.temp, { mode: "setpoint" })}`);
+    if (pct && s.heating != null) parts.push(`${t.runtime.toLowerCase()} ${this.fmtT(s.heating * 100, z)}`);
+    if (s.price != null) parts.push(this.fmtPrice(s.price));
+    const why = this._pastWhy(s);
+    return `${this._pastWhen(s)}: ${parts.join(", ")}${why ? ` – ${why}` : ""}`;
+  }
+  _summary(z) {
+    const t = this.t, pct = z.mode === "percent";
+    const rows = (this._series_ || []).filter((s) => !s.partial && !s.empty);
+    const mean = (a) => a.reduce((x, y) => x + y, 0) / a.length;
+    const parts = [];
+    if (!pct) {
+      const withT = rows.filter((s) => s.temp != null), both = withT.filter((s) => s.target != null);
+      if (withT.length) {
+        const avg = this.fmtT(mean(withT.map((s) => s.temp)), z);
+        parts.push(both.length ? t.sumAvg(avg, this.fmtT(mean(both.map((s) => s.target)), z)) : `${t.actual} ${avg}`);
+        // below target: the hour's mean half a degree or more under (pre-heat hours aim above comfort, so they don't count)
+        parts.push(t.sumBelow(both.filter((s) => s.temp < s.target - 0.5 && s.rawMode !== "preheat").length));
+      }
+    } else {
+      const d = rows.filter((s) => s.target != null);
+      if (d.length) parts.push(t.sumAvgPct(this.fmtT(mean(d.map((s) => s.target)), z)));
+    }
+    const kw = rows.filter((s) => s.kwh != null);
+    if (kw.length) {
+      const cost = rows.filter((s) => s.cost != null);
+      parts.push(t.sumEnergy(this.fmtNum(kw.reduce((a, s) => a + s.kwh, 0), 1), cost.length ? this.fmtMoney(cost.reduce((a, s) => a + s.cost, 0)) : null));
+    }
+    const done = new Set(rows.map((s) => s.start));
+    const home = (this._histData()?.home || []).filter((h) => done.has(h.start) && typeof h.house_kwh === "number");
+    if (home.length) {
+      const top = home.reduce((a, h) => (h.house_kwh > a.house_kwh ? h : a));
+      const caps = home.map((h) => h.cap_kw).filter((c) => typeof c === "number");
+      const cap = typeof top.cap_kw === "number" ? top.cap_kw : caps.length ? Math.max(...caps) : null;
+      parts.push(t.sumTop(this.fmtNum(top.house_kwh, 1), cap != null ? this.fmtNum(cap, 1) : null) + (cap != null && top.house_kwh > cap ? t.sumOver : ""));
+    }
+    const label = this._range === "48" ? t.r48 : t.r24;
+    if (!parts.length) return el("p", { class: "summary", text: `${label}: ${t.sumNone}` });
+    const txt = parts.join(" · ");
+    return el("p", { class: "summary" }, el("b", { text: `${label}: ` }), txt.charAt(0).toUpperCase() + txt.slice(1) + ".");
+  }
+  _pastLoadRow() {
+    const data = this._histData(), series = this._series_ || [];
+    if (!data?.home || !this._geo || !series.length) return null;
+    const byStart = new Map(data.home.map((h) => [h.start, h]));
+    const rows = series.map((s) => byStart.get(s.start) || null);
+    const kwh = (r) => (r && typeof r.house_kwh === "number" ? r.house_kwh : null);
+    if (!rows.some((r) => kwh(r) !== null)) return null;
+    const caps = rows.map((r) => (r && typeof r.cap_kw === "number" ? r.cap_kw : null));
+    const { X, bw, W, m } = this._geo;
+    const H = 30, top = 4, base = H - 4;
+    const max = Math.max(0.5, ...rows.map((r) => kwh(r) ?? 0), ...caps.map((c) => (c ?? 0) * 1.15));
+    const Yk = (v) => base - (v / max) * (base - top);
+    const capVals = caps.filter((c) => c !== null);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, class: "loadrow", role: "img",
+      "aria-label": `${this.t.homeLoad}${capVals.length ? ` · ${this.t.capToday(this.fmtNum(Math.max(...capVals), 1))}` : ""}` });
+    rows.forEach((r, i) => {
+      const v = kwh(r);
+      if (v === null) return;
+      const y = Yk(v);
+      svg.append(el("rect", { class: `kwbar${caps[i] !== null && v > caps[i] ? " over" : ""}${r.live ? " live" : ""}`, x: X(i) + bw * 0.22, y, width: bw * 0.56, height: Math.max(1, base - y), rx: Math.min(1.5, bw * 0.2) }));
+    });
+    let d = "";
+    caps.forEach((c, i) => { if (c === null) return; d += `${i && caps[i - 1] !== null ? "L" : "M"}${X(i)},${Yk(c)}L${X(i + 1)},${Yk(c)}`; });
+    if (d) svg.append(el("path", { class: "capstep", d }));
+    svg.append(el("text", { x: m.l - 6, y: Yk(capVals.length ? capVals[capVals.length - 1] : max) + 3.5, "text-anchor": "end", text: "kWh" }));
+    return svg;
   }
 
   // ------------------------------------------------------------- story
@@ -705,6 +889,7 @@ class HeatPlannerCard extends HTMLElement {
   _loadRow() {
     // Thin home-load row aligned with the chart (whole house: rest of the home + planned
     // heating, the current hour live from the meter), with the day's cap as a dashed line.
+    if (this.past) return this._pastLoadRow();
     const pk = this.entry?.peak, cap = pk?.cap_kw;
     const series = this._series_ || [];
     if (this._edit || !pk || typeof cap !== "number" || !this._geo || !Array.isArray(pk.load)) return null;
@@ -843,17 +1028,27 @@ class HeatPlannerCard extends HTMLElement {
     if (this.hasFeedback(z)) panel.append(this._feedbackRow(z));
 
     const hintId = `${this._uid}-keys`;
-    const chart = el("div", {
-      class: `chartwrap${this._edit ? " editing" : ""}`, tabindex: "0", role: "group", "data-fk": "chart",
-      "aria-roledescription": this.lang === "nb" ? "diagram" : "chart",
-      "aria-label": t.chartLabel(z.name, this._edit ? 24 : Math.min(this._config.hours, (z.plan?.hours || []).length)),
-      "aria-describedby": hintId,
-    });
-    panel.append(chart, el("p", { class: "sr-only", id: hintId, text: this._edit ? t.editKeys : t.chartKeys }));
-    this._drawChart(chart, z);
-    this._bindChart(chart, z);
-    const load = this._loadRow();
-    if (load) panel.append(load);
+    const past = this.past;
+    if (this.hasHistory && !this._edit) panel.append(this._rangeBar());
+    if (past) this._loadHistory();
+    if (past && !this._histZone(z)) {
+      panel.append(this._histPlaceholder());
+      this._series_ = []; this._geo = null;
+    } else {
+      const chart = el("div", {
+        class: `chartwrap${this._edit ? " editing" : ""}`, tabindex: "0", role: "group", "data-fk": "chart",
+        "aria-roledescription": this.lang === "nb" ? "diagram" : "chart",
+        "aria-label": past ? t.histLabel(z.name, this.pastHours)
+          : t.chartLabel(z.name, this._edit ? 24 : Math.min(this._config.hours, (z.plan?.hours || []).length)),
+        "aria-describedby": hintId,
+      });
+      panel.append(chart, el("p", { class: "sr-only", id: hintId, text: this._edit ? t.editKeys : past ? t.histKeys : t.chartKeys }));
+      this._drawChart(chart, z);
+      this._bindChart(chart, z);
+      const load = this._loadRow();
+      if (load) panel.append(load);
+      if (past && this._hist?.error && !this._hist.loading) panel.append(this._histPlaceholder());
+    }
     const tariff = this._tariffLine();
     if (tariff) panel.append(tariff);
     panel.append(this._legend(z));
@@ -862,7 +1057,8 @@ class HeatPlannerCard extends HTMLElement {
     else {
       const showHelp = this._config.show_help !== false && customElements.get("heat-planner-help");
       panel.append(el("div", { class: "bar" },
-        el("span", { class: `cost${this._flashFor(z) ? " flash" : ""}`, text: this._flashFor(z) ? this._flash.text : this.costLine(z) }),
+        past && !this._flashFor(z) ? this._summary(z)
+          : el("span", { class: `cost${this._flashFor(z) ? " flash" : ""}`, text: this._flashFor(z) ? this._flash.text : this.costLine(z) }),
         el("div", { class: "row" },
           showHelp ? el("button", { class: "btn ghost", text: this._showHelp ? t.closeHelp : t.help, "aria-expanded": String(!!this._showHelp),
             "data-fk": "help", onclick: () => { this._showHelp = !this._showHelp; this._update(true); } }) : null,
@@ -885,6 +1081,7 @@ class HeatPlannerCard extends HTMLElement {
 
   _legend(z) {
     const t = this.t;
+    if (this.past) return this._pastLegend(z);
     const modes = new Set((this._edit?.preview || z.plan)?.hours?.map((h) => h.mode) || []);
     const items = [...modes].filter((m) => t.modes[m]).map((m) => el("span", {},
       el("i", m === "off" ? { class: "hatch-off", "aria-hidden": "true" } : { style: `background:${MODE_COLOR[m]}`, "aria-hidden": "true" }), t.modes[m]));
@@ -897,8 +1094,35 @@ class HeatPlannerCard extends HTMLElement {
     return el("div", { class: "legend" }, items);
   }
 
+  _pastLegend(z) {
+    const t = this.t, series = this._series_ || [], pct = z.mode === "percent";
+    const items = [];
+    const modes = new Set(series.filter((s) => !s.empty && s.target != null).map((s) => s.mode));
+    if (series.some((s) => !s.empty && s.target == null)) modes.add("off");
+    for (const m of modes) if (t.modes[m]) items.push(el("span", {},
+      el("i", m === "off" ? { class: "hatch-off", "aria-hidden": "true" } : { style: `background:${MODE_COLOR[m]}`, "aria-hidden": "true" }), t.modes[m]));
+    if (!pct && series.some((s) => s.temp != null)) items.push(el("span", {}, el("i", { class: "solid", "aria-hidden": "true" }), t.actual));
+    if (pct && series.some((s) => s.heating != null)) items.push(el("span", {}, el("i", { class: "solid", "aria-hidden": "true" }), t.runtime));
+    if (!pct && series.some((s) => s.predicted != null)) items.push(el("span", {}, el("i", { class: "dash", "aria-hidden": "true" }), t.predicted));
+    const glyph = { manual: el("circle", { class: "ring", cx: 5, cy: 5, r: 3.6 }), shed: el("path", { class: "tri", d: "M1,1.5L9,1.5L5,9Z" }), off: el("rect", { class: "sq", x: 1.5, y: 1.5, width: 7, height: 7, rx: 1 }) };
+    for (const k of ["manual", "shed", "off"]) if (series.some((s) => (s.flags || []).includes(k)))
+      items.push(el("span", {}, el("svg", { viewBox: "0 0 10 10", class: "mkr", "aria-hidden": "true" }, glyph[k]), t.mk[k]));
+    const lv = new Set(series.map((s) => s.price != null && s.level).filter(Boolean));
+    const pl = ["cheap", "expensive", "extreme"].filter((l) => lv.has(l));
+    if (pl.length) items.push(el("span", {}, `${t.price}: `, pl.map((l) => el("span", { style: "margin-right:8px" },
+      el("i", l === "extreme" ? { class: "hatch-ext", "aria-hidden": "true" } : { style: `background:${LEVEL_COLOR[l]}`, "aria-hidden": "true" }), t.levels[l]))));
+    return el("div", { class: "legend" }, items);
+  }
+
   // ------------------------------------------------------------- chart
   _series(z) {
+    if (this.past) {
+      return (this._histZone(z)?.hours || []).map((h) => ({
+        ...h, past: true, key: this.dateKey(h.start), hour: +this.hh(h.start), scheduled: h.target,
+        mode: MODE_COLOR[h.mode] ? h.mode : "normal", rawMode: h.mode, level: h.level || "normal",
+        empty: h.mode == null && h.target == null && h.temp == null && h.heating == null,
+      }));
+    }
     if (!this._edit) {
       const hrs = (z.plan?.hours || []).slice(0, this._config.hours);
       return hrs.map((h) => ({ ...h, key: this.dateKey(h.start), hour: +this.hh(h.start) }));
@@ -938,8 +1162,8 @@ class HeatPlannerCard extends HTMLElement {
     let lo, hi;
     if (percent) { lo = 0; hi = 100; }
     else {
-      const vals = series.flatMap((s) => [s.target, s.scheduled, s.predicted]).filter((v) => v !== null && v !== undefined);
-      if (z.room_temperature != null) vals.push(z.room_temperature);
+      const vals = series.flatMap((s) => [s.target, s.scheduled, s.predicted, s.temp]).filter((v) => v !== null && v !== undefined);
+      if (z.room_temperature != null && !this.past) vals.push(z.room_temperature);
       if (!vals.length) vals.push(z.settings?.comfort ?? 21);
       lo = Math.floor(Math.min(...vals) - 1); hi = Math.ceil(Math.max(...vals) + 1);
       if (hi - lo < 6) { const c = (hi + lo) / 2; lo = Math.floor(c - 3); hi = Math.ceil(c + 3); }
@@ -949,7 +1173,8 @@ class HeatPlannerCard extends HTMLElement {
     this._geo = { X, Y, bw, lo, hi, m, ch, n, W, H, percent };
     const hatch = `${this._uid}-hatch`, offp = `${this._uid}-off`;
 
-    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, "aria-hidden": "true", focusable: "false" });
+    const past = this.past;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, height: H, "aria-hidden": "true", focusable: "false", class: past ? "past" : null });
     svg.append(el("defs", {},
       el("pattern", { id: hatch, width: 4, height: 4, patternUnits: "userSpaceOnUse", patternTransform: "rotate(45)" },
         el("rect", { width: 2, height: 4, fill: "var(--hp-bg)", opacity: 0.6 })),
@@ -967,13 +1192,14 @@ class HeatPlannerCard extends HTMLElement {
     const ribbon = el("g");
     const floorY = m.t + ch;
     series.forEach((s, i) => {
+      if (s.empty) return; // no record for this hour (look-back view)
       const color = MODE_COLOR[s.mode] || MODE_COLOR.normal;
       if (s.target === null || s.target === undefined) {
         ribbon.append(el("rect", { x: X(i) + 0.5, y: floorY - 12, width: Math.max(0, bw - 1), height: 12, fill: `url(#${offp})` }));
         ribbon.append(el("rect", { x: X(i) + 0.5, y: floorY - 13.5, width: Math.max(0, bw - 1), height: 3, rx: 1.5, fill: MODE_COLOR.off }));
         const first = i === 0 || series[i - 1].target != null;
         if (first) {
-          let run = 1; while (i + run < n && series[i + run].target == null) run++;
+          let run = 1; while (i + run < n && series[i + run].target == null && !series[i + run].empty) run++;
           ribbon.append(el("text", { class: "offt", x: X(i) + (run * bw) / 2, y: floorY - 18, "text-anchor": "middle", text: this.t.offShort }));
         }
         return;
@@ -993,10 +1219,26 @@ class HeatPlannerCard extends HTMLElement {
     if (!percent || series.some((s) => s.predicted != null)) {
       const pts = series.map((s, i) => (s.predicted == null ? null : [X(i) + bw, Y(s.predicted)]));
       const nf = this._nowFrac(series);
-      if (z.room_temperature != null && !this._edit && nf !== null) pts.unshift([X(0) + bw * nf, Y(z.room_temperature)]);
+      if (z.room_temperature != null && !this._edit && !past && nf !== null) pts.unshift([X(0) + bw * nf, Y(z.room_temperature)]);
       let d = ""; let pen = false;
       pts.forEach((p) => { if (!p) { pen = false; return; } d += `${pen ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`; pen = true; });
       if (d) svg.append(el("path", { class: "pred", d }));
+    }
+
+    // look-back: what was measured (room temperature; for percent rooms the heater's on-time)
+    if (past) {
+      const nkf = this.nowKey().frac;
+      const pts = series.map((s, i) => {
+        const v = percent ? (s.heating != null ? s.heating * 100 : null) : s.temp;
+        return v == null ? null : [X(i) + (s.partial ? Math.max(0.1, nkf) / 2 : 0.5) * bw, Y(v)];
+      });
+      let d = "";
+      pts.forEach((p, i) => {
+        if (!p) return;
+        d += `${pts[i - 1] ? "L" : "M"}${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+        if (!pts[i - 1] && !pts[i + 1]) svg.append(el("circle", { class: "actdot", cx: p[0], cy: p[1], r: 2.2 }));
+      });
+      if (d) svg.append(el("path", { class: "act", d }));
     }
 
     // price strip; extreme hours get a hatch on top of the colour
@@ -1008,9 +1250,27 @@ class HeatPlannerCard extends HTMLElement {
       series.forEach((s, i) => {
         if (s.price == null) return;
         const hgt = Math.max(2, ((s.price - pmin) / (pmax - pmin || 1)) * ph);
-        const r = { x: X(i) + bw * 0.18, y: py0 - hgt, width: bw * 0.64, height: hgt, rx: Math.min(2, bw * 0.2) };
+        const r = { x: X(i) + bw * 0.18, y: py0 - hgt, width: bw * 0.64, height: hgt, rx: Math.min(2, bw * 0.2), class: past ? "pbar" : null };
         g.append(el("rect", { ...r, fill: LEVEL_COLOR[s.level] || LEVEL_COLOR.normal }));
         if (s.level === "extreme") g.append(el("rect", { ...r, fill: `url(#${hatch})` }));
+      });
+      svg.append(g);
+    }
+
+    // look-back markers between the chart and the price strip: ring = changed by hand,
+    // triangle = set back for the capacity cap, square = heating off (shape, not colour alone)
+    if (past) {
+      const g = el("g", { class: "mkr" });
+      const my = m.t + ch + 8;
+      series.forEach((s, i) => {
+        const kinds = ["manual", "shed", "off"].filter((k) => (s.flags || []).includes(k));
+        const step = Math.min(9, bw / Math.max(1, kinds.length));
+        kinds.forEach((k, j) => {
+          const cx = X(i) + bw / 2 + (j - (kinds.length - 1) / 2) * step;
+          if (k === "manual") g.append(el("circle", { class: "ring", cx, cy: my, r: 3.2 }));
+          else if (k === "shed") g.append(el("path", { class: "tri", d: `M${cx - 3.6},${my - 3}L${cx + 3.6},${my - 3}L${cx},${my + 3.4}Z` }));
+          else g.append(el("rect", { class: "sq", x: cx - 3, y: my - 3, width: 6, height: 6, rx: 1 }));
+        });
       });
       svg.append(g);
     }
@@ -1029,7 +1289,7 @@ class HeatPlannerCard extends HTMLElement {
     svg.append(axis);
 
     const nk = this.nowKey();
-    const idx = series.findIndex((s) => s.key === nk.date && s.hour === nk.hour);
+    const idx = past ? series.findIndex((s) => s.partial) : series.findIndex((s) => s.key === nk.date && s.hour === nk.hour);
     if (idx >= 0 && !this._edit) {
       const x = X(idx) + bw * nk.frac;
       svg.append(el("g", { class: "now" }, el("line", { x1: x, x2: x, y1: m.t, y2: H - m.b }),
@@ -1148,7 +1408,7 @@ class HeatPlannerCard extends HTMLElement {
       case "PageDown": return move(i + 6);
       case "Enter": case " ": {
         ev.preventDefault();
-        if (this._edit) return;
+        if (this._edit || this.past) return;
         const s = series[i];
         this._focusIdx = s.hour;
         this._kbActive = true;
@@ -1192,6 +1452,7 @@ class HeatPlannerCard extends HTMLElement {
   }
   _reasonText(s) { const t = this.t; return (s.reasons || []).map((r) => t.reasons[r] || r).join(". "); }
   _hourText(s, z) {
+    if (s.past) return this._pastText(s, z);
     const t = this.t, extra = this.entry?.price_extra || 0;
     const parts = [this._when(s), s.target === null ? t.modes.off : `${t.target} ${this.fmtT(s.target, z)}`];
     if (s.predicted != null) parts.push(`${t.predicted} ${this.fmtT(s.predicted, { mode: "setpoint" })}`);
@@ -1201,9 +1462,25 @@ class HeatPlannerCard extends HTMLElement {
     return parts.join(". ") + ".";
   }
 
+  _pastTip(s, z) {
+    const t = this.t, pct = z.mode === "percent";
+    const row = (label, val, rest) => el("div", {}, `${label}: `, el("b", { text: val }), rest || null);
+    const why = this._pastWhy(s);
+    return el("div", { class: "tip", "aria-hidden": "true" },
+      el("div", {}, el("b", { text: this._pastWhen(s) }), "  ",
+        s.empty ? "–" : s.target == null ? t.modes.off : `${t.target} `, s.empty || s.target == null ? null : el("b", { text: this.fmtT(s.target, z) })),
+      s.temp != null ? row(t.actual, this.fmtT(s.temp, { mode: "setpoint" })) : null,
+      s.predicted != null ? row(t.predicted, this.fmtT(s.predicted, { mode: "setpoint" })) : null,
+      pct && s.heating != null ? row(t.runtime, this.fmtT(s.heating * 100, z)) : null,
+      s.price != null ? row(t.price, this.fmtPrice(s.price), ` (${t.levels[s.level] || s.level})`) : null,
+      s.kwh != null ? el("div", {}, el("b", { text: `${this.fmtNum(s.kwh, 2)} kWh` }), s.cost != null ? ` ≈ ${this.fmtMoney(s.cost)}` : null) : null,
+      why ? el("div", { class: "r", text: why }) : null);
+  }
+
   _showTip(wrap, s, z, frac) {
     const t = this.t;
     this._hideTip();
+    if (s.past) return this._placeTip(wrap, this._pastTip(s, z), frac);
     const extra = this.entry?.price_extra || 0;
     const tv = this._edit ? s.scheduled : s.target; // while editing: the value being painted
     const tip = el("div", { class: "tip", "aria-hidden": "true" },
@@ -1212,6 +1489,9 @@ class HeatPlannerCard extends HTMLElement {
       s.predicted != null ? el("div", {}, `${t.predicted}: `, el("b", { text: this.fmtT(s.predicted, { mode: "setpoint" }) })) : null,
       s.price != null ? el("div", {}, `${t.price}: `, el("b", { text: this.fmtPrice(s.price + extra) }), ` (${t.levels[s.level] || s.level})`) : null,
       el("div", { class: "r", text: this._reasonText(s) }));
+    this._placeTip(wrap, tip, frac);
+  }
+  _placeTip(wrap, tip, frac) {
     wrap.append(tip);
     const w = wrap.clientWidth; const tw = tip.offsetWidth;
     tip.style.left = `${Math.max(0, Math.min(w - tw, frac * w - tw / 2))}px`;
@@ -1230,6 +1510,7 @@ class HeatPlannerCard extends HTMLElement {
   }
 
   _startEdit(z, date) {
+    this._range = "plan";
     this._edit = { date, values: this.dayValues(z, date), dirty: new Set(), preview: null, scope: "date" };
     this._frozen = null;
     this._update(true);

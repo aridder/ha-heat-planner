@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import math
 import sys
 import types
 from dataclasses import asdict
@@ -161,10 +162,86 @@ peak_state = {
 }
 
 levels = planner.classify_prices(prices, rules)
+
+# --------------------------------------------------------------------------- look-back (heat_planner/history)
+# The last 48 hours, planned by the same code from Saturday 10:00, with "measured" room
+# temperatures a little off the prediction, one manual change, a capacity set-back and an off hour.
+past_spot = dict(spot)
+for d, (src, f) in ((-2, (1, 1.05)), (-1, (0, 0.97))):
+    for h in range(24):
+        past_spot[(day0 + timedelta(days=d)).replace(hour=h)] = round(SPOT[src][h] * f, 3)
+past_prices = tariff.effective_prices(past_spot, TARIFF)
+past_levels = planner.classify_prices(past_prices, rules)
+past_outdoor = {k: OUTDOOR[k.hour] + 1.0 for k in past_spot}
+past_sol = {k: round(solar.solar_factor(k, LAT, LON, CLOUD[k.hour]), 3) for k in past_spot}
+HSTART = start - timedelta(hours=48)
+yesterday = (day0 - timedelta(days=1)).date()
+
+
+def _at(h):
+    return (day0 - timedelta(days=1)).replace(hour=h)
+
+
+hist_zones = []
+house = {}
+for (spec, zc), zout in zip(configs, zones_out):
+    plan = planner.build_plan(
+        zc, planner.default_schedule(zc.mode), {}, past_prices, rules, HSTART, 49, room_temp=20.2 if not zc.is_percent else None,
+        outdoor=past_outdoor, outdoor_default=0.0, method="optimize", solar=past_sol,
+    )
+    rows, prev = [], 20.2
+    for i, h in enumerate(plan.hours):
+        partial = i == len(plan.hours) - 1
+        flags, mode, target, reasons = [], h.mode, h.target, list(h.reasons)
+        if zc.zone_id == "living_room" and h.start in (_at(17), _at(18)):
+            flags, target, reasons = ["shed"], (target or 21) - 1.0, reasons + ["peak_limit"]
+        if zc.zone_id == "living_room" and h.start == _at(20):
+            flags, mode, target, reasons = ["manual", "paused"], "manual", 23.0, []
+        if zc.zone_id == "living_room" and h.start == _at(21):
+            flags, mode, target, reasons = ["paused"], "manual", 23.0, []
+        if zc.zone_id == "kitchen" and h.start == _at(18):
+            flags, mode, target, reasons = ["off"], "off", None, ["extreme_off"]
+        temp = None
+        if not zc.is_percent:
+            pred = h.predicted if h.predicted is not None else prev
+            temp = (prev + pred) / 2 + 0.16 * math.sin(i * 2.1) + 0.09 * math.sin(i * 0.7)
+            if mode == "manual":
+                temp += 0.5 if "manual" in flags else 0.9
+            prev = pred
+            if partial:
+                temp = spec["room"]
+        heating = None
+        if zc.is_percent and target is not None:
+            heating = max(0.0, min(1.0, target / 100 + 0.04 * math.sin(i * 1.3)))
+        kwh = 0.0 if target is None else round(h.kwh * (1.3 if mode == "manual" else 1.0), 3)
+        price = round(past_prices.get(h.start, 0.0), 4)
+        rows.append({
+            "start": h.start.isoformat(), "target": target, "mode": mode, "reasons": reasons, "price": price,
+            "level": past_levels.get(h.start), "predicted": None if zc.is_percent else h.predicted,
+            "temp": None if temp is None else round(temp, 2), "heating": None if heating is None else round(heating, 3),
+            "flags": flags, "kwh": kwh, "cost": round(kwh * price, 4), "src": "live", "partial": partial,
+        })
+        house[h.start] = house.get(h.start, 0.0) + kwh
+    hist_zones.append({
+        "zone_id": zc.zone_id, "name": zc.name, "mode": zc.mode, "has_temperature": not zc.is_percent,
+        "heater_kw": zc.heater_kw, "hours": rows,
+    })
+home_rows = []
+for k in sorted(house):
+    base = 0.9 + (2.6 if k.hour in (7, 8, 17, 18, 19) else 0.8 if 9 <= k.hour <= 22 else 0.0)
+    home_rows.append({"start": k.isoformat(), "house_kwh": round(base + house[k], 2), "cap_kw": None, "live": k == start})
+history = {
+    "entry_id": "example", "hours": 48, "now": NOW.isoformat(), "start": HSTART.isoformat(),
+    "end": (start + timedelta(hours=1)).isoformat(), "currency": "NOK", "price_unit": "NOK/kWh", "metered": True,
+    "zones": hist_zones, "home": home_rows,
+}
+
+for r in home_rows:
+    r["cap_kw"] = round(peak_state["cap_kw"], 2)
 export = {
     "entry_id": "example", "title": "Home", "currency": "NOK", "price_unit": "NOK/kWh",
     "price_source": "Nord Pool NO1", "price_extra": 0.0, "price_extra_configured": 0.0,
-    "rules": asdict(rules), "optimize": True, "features": ["feedback"],
+    "rules": asdict(rules), "optimize": True, "features": ["feedback", "history_log"],
     "arrival": {"expected": ARRIVAL_EXPECTED.strftime("%H:%M"), "count": 6, "source": "weekday",
                 "weekday": NOW.weekday(), "warm_from": warm_from},
     "tariff": {"mode": TARIFF.mode, "label": tariff.describe(TARIFF, LANG), **TARIFF.as_dict()},
@@ -172,4 +249,4 @@ export = {
     "prices": [{"start": h.isoformat(), "price": round(p, 4), "level": levels.get(h)} for h, p in prices.items()],
     "zones": zones_out, "updated": NOW.isoformat(),
 }
-json.dump({"now": NOW.isoformat(), "entries": [export]}, sys.stdout, ensure_ascii=False, indent=1)
+json.dump({"now": NOW.isoformat(), "entries": [export], "history": history}, sys.stdout, ensure_ascii=False, indent=1)

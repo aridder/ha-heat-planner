@@ -57,6 +57,16 @@
       const d = o.pred.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v).toFixed(1)}`).join("");
       s += `<path d="${d}" class="pred"/>`;
     }
+    if (o.meas) {
+      const d = o.meas.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v).toFixed(1)}`).join("");
+      s += `<path d="${d}" class="meas"/>`;
+    }
+    for (const g of o.glyphs || []) {
+      const cx = X(g.h) + bw / 2, cy = top + ch + 6;
+      s += g.k === "manual" ? `<circle cx="${cx}" cy="${cy}" r="3.4" class="gring"/>`
+        : g.k === "shed" ? `<path d="M${cx - 3.8},${cy - 3.2}L${cx + 3.8},${cy - 3.2}L${cx},${cy + 3.6}Z" class="gtri"/>`
+          : `<rect x="${cx - 3.2}" y="${cy - 3.2}" width="6.4" height="6.4" rx="1" class="gsq"/>`;
+    }
     if (o.dots) for (const [i, v] of o.dots) s += `<circle cx="${X(i) + bw / 2}" cy="${Y(v)}" r="2.6" class="dot"/>`;
     const pm = Math.max(...o.prices);
     o.prices.forEach((p, i) => {
@@ -112,6 +122,16 @@
   ];
   for (const r of RULES) r.pred = sim(r.tgt, r.modes, 20.9, 0.35);
 
+  // looking back: 12 hours up to now – measured (solid) against expected (dashed)
+  const LOOK = {
+    prices: [0.7, 0.75, 0.9, 1.3, 1.6, 1.45, 1.1, 0.95, 1.4, 2.1, 1.9, 1.2],
+    levels: lv("ccnneennnxen"),
+    tgt: [21, 21, 22, 22, 20, 20, 21, 21, 23, 23, 21, 21],
+    modes: md("nnppvvnnnnnn"),
+    meas: [20.6, 20.8, 21.3, 21.9, 21.4, 20.7, 20.5, 20.8, 21.6, 22.3, 21.9, 21.4],
+  };
+  LOOK.pred = sim(LOOK.tgt, LOOK.modes, 20.7, 0.35);
+
   const MANUAL = {
     prices: [0.9, 0.95, 1.0, 1.1, 1.2, 1.15, 1.0, 0.95, 0.85, 0.75, 0.7, 0.65],
     levels: lv("nnnnnnnnnccc"),
@@ -139,7 +159,7 @@
       title: "Slik fungerer varmeplanen",
       lead: "Heat Planner lager en plan for hver time de neste 36 timene, for hvert rom – og stiller termostatene etter den. Her er hva som påvirker planen, og hvordan du tar kontrollen selv.",
       tocLabel: "Innhold",
-      toc: { day: "En vanlig dag", colors: "Fargene", rules: "Prisreglene", optimizer: "Optimereren", tariff: "Strømavtalen", peak: "Effekttrinn", away: "Når dere er borte", arrival: "Hjemkomst", edit: "Endre planen", manual: "Når du tar over", feedback: "For kaldt / varmt", safety: "Sikkerhet", learn: "Hva den lærer", confidence: "Hvor sikker", money: "Kostnad", settings: "Innstillinger", faq: "Spørsmål" },
+      toc: { look: "Se bakover", day: "En vanlig dag", colors: "Fargene", rules: "Prisreglene", optimizer: "Optimereren", tariff: "Strømavtalen", peak: "Effekttrinn", away: "Når dere er borte", arrival: "Hjemkomst", edit: "Endre planen", manual: "Når du tar over", feedback: "For kaldt / varmt", safety: "Sikkerhet", learn: "Hva den lærer", confidence: "Hvor sikker", money: "Kostnad", settings: "Innstillinger", faq: "Spørsmål" },
 
       optH: "Optimereren",
       optP: "Med «Optimer (alle rom)» på bruker Heat Planner ikke bare reglene over. Den simulerer hvert rom med sin egen modell og velger målet for hver time som gir lavest kostnad – energi × pris, pluss en straff for å være kaldere enn kurven din (og, med effekttrinn, for å gå over taket). Den forvarmer bare når det er billigere å lagre varme i gulvet enn å varme i de dyre timene, ekstra varmetap medregnet.",
@@ -190,6 +210,14 @@
       arrivalLive: (t) => `Hos dere: vanligvis hjemme ca. <b>${t}</b>.`,
       expLbl: "anslag", warmLbl: "varmer opp",
 
+      lookH: "Se bakover",
+      lookP: "Over diagrammet velger du «Plan», «Siste 24 t» eller «Siste 48 t». Bakover viser kortet hva som faktisk skjedde, time for time: målet som ble satt, målt romtemperatur, prisen og hvorfor. Hold over eller gå med piltastene for detaljer. Historikken lagres i sju døgn og overlever omstart – etter en omstart fylles de siste 48 timene inn fra Home Assistants historikk.",
+      lookMarks: [
+        ["1", "Heltrukket linje", "Målt romtemperatur, snitt for timen. Den stiplede er det planen forventet."],
+        ["2", "Små merker", "Ring: endret for hånd. Trekant: satt ned for effekttaket. Firkant: varmen av."],
+        ["3", "Oppsummering", "Snitt mot mål, timer minst et halvt grad under målet (forvarming teller ikke), kWh med anslått kostnad og husets høyeste time mot taket."],
+      ],
+      lookNote: "Rom i prosent uten romføler viser varmebehovet i prosent – og hvor stor del av timen varmen faktisk sto på, når termostaten melder det. En termostat som melder 0° (uten gulvføler) regnes ikke som romtemperatur.",
       fbH: "For kaldt eller for varmt?",
       fbP: "Trykk «For kaldt» eller «For varmt» i planen. Heat Planner justerer én ting litt – ut fra hva planen gjorde akkurat da – og forteller hva den endret.",
       fbDemo: ["Stue er 19,5°. Sparer med 20° i en dyr time.", "For kaldt", "For varmt", "Senker mindre i dyre timer (1° → 0,5°)."],
@@ -328,7 +356,7 @@
       title: "How the heating plan works",
       lead: "Heat Planner makes an hour-by-hour plan for the next 36 hours for every room – and sets the thermostats to follow it. Here is what shapes the plan, and how you take control yourself.",
       tocLabel: "Contents",
-      toc: { day: "A normal day", colors: "Colours", rules: "Price rules", optimizer: "Optimiser", tariff: "Your contract", peak: "Capacity tariff", away: "When you're away", arrival: "Arrival", edit: "Changing the plan", manual: "Taking over", feedback: "Too cold / warm", safety: "Safety", learn: "What it learns", confidence: "Confidence", money: "Cost", settings: "Settings", faq: "Questions" },
+      toc: { look: "Look back", day: "A normal day", colors: "Colours", rules: "Price rules", optimizer: "Optimiser", tariff: "Your contract", peak: "Capacity tariff", away: "When you're away", arrival: "Arrival", edit: "Changing the plan", manual: "Taking over", feedback: "Too cold / warm", safety: "Safety", learn: "What it learns", confidence: "Confidence", money: "Cost", settings: "Settings", faq: "Questions" },
 
       optH: "The optimiser",
       optP: "With “Optimise (all rooms)” on, Heat Planner doesn't just apply the rules above. It simulates each room with its own model and picks every hour's target for the lowest cost – energy × price, plus a penalty for being colder than your curve (and, with a capacity tariff, for going over the cap). It only pre-heats when storing heat in the floor is cheaper than heating in the expensive hours, extra losses included.",
@@ -379,6 +407,14 @@
       arrivalLive: (t) => `In your home: usually home around <b>${t}</b>.`,
       expLbl: "estimate", warmLbl: "warming up",
 
+      lookH: "Look back",
+      lookP: "Above the chart, pick “Plan”, “Last 24 h” or “Last 48 h”. Looking back, the card shows what actually happened, hour by hour: the target that was set, the measured room temperature, the price and why. Hover or use the arrow keys for details. The history is kept for seven days and survives restarts – after a restart the last 48 hours are filled in from Home Assistant's history.",
+      lookMarks: [
+        ["1", "Solid line", "Measured room temperature, the hour's average. The dashed line is what the plan expected."],
+        ["2", "Small markers", "Ring: changed by hand. Triangle: set back for the capacity cap. Square: heating off."],
+        ["3", "Summary", "Average against target, hours at least half a degree below target (pre-heating doesn't count), kWh with an estimated cost, and the home's highest hour against the cap."],
+      ],
+      lookNote: "Percent rooms without a room sensor show their heating demand in percent – and how much of each hour the heater was actually on, when the thermostat reports it. A thermostat reporting 0° (no floor sensor) is not taken as a room temperature.",
       fbH: "Too cold or too warm?",
       fbP: "Tap “Too cold” or “Too warm” in the plan. Heat Planner nudges one thing a little – based on what the plan was doing at that moment – and tells you what it changed.",
       fbDemo: ["Living room is 19.5°. Saving at 20° through an expensive hour.", "Too cold", "Too warm", "Lowering less in expensive hours (1° → 0.5°)."],
@@ -564,6 +600,10 @@ p.d { color:var(--hp-soft); max-width:64ch; line-height:1.55; margin:0 0 18px; f
 .ill .pred { fill:none; stroke:var(--hp-ink); stroke-width:1.5; stroke-dasharray:4 4; opacity:.65; }
 .ill .act { fill:none; stroke:var(--hp-comfort); stroke-width:3; stroke-linejoin:round; }
 .ill .dot { fill:var(--hp-ink); opacity:.55; }
+.ill .meas { fill:none; stroke:var(--hp-ink); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
+.ill .gring { fill:var(--ha-card-background, var(--card-background-color, #fff)); stroke:var(--hp-ink); stroke-width:1.4; }
+.ill .gtri { fill:var(--hp-ext); }
+.ill .gsq { fill:var(--hp-off); }
 .ill .band { fill:var(--hp-tint); }
 .ill .band.away { fill:color-mix(in srgb, var(--hp-setback) 9%, transparent); }
 .ill .band.pause { fill:color-mix(in srgb, var(--hp-comfort) 11%, transparent); }
@@ -888,6 +928,12 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
         <ul class="marks" style="margin:0;grid-template-columns:1fr">${t.fbRules.map(([b, p], i) => `<li><span class="num">${i + 1}</span><div><b>${b}</b>${p}</div></li>`).join("")}</ul>
       </div><p class="tip">${t.fbNote}</p>`);
 
+      const look = sec("look", 0, t.lookH, `<p class="d">${t.lookP}</p>` + chart({
+        prices: LOOK.prices, levels: LOOK.levels, tgt: LOOK.tgt, modes: LOOK.modes, start: 22, y: [18.5, 24], ticks: [20, 22, 24], every: 2,
+        pred: LOOK.pred, meas: LOOK.meas, now: 12, glyphs: [{ k: "shed", h: 4 }, { k: "manual", h: 8 }],
+        marks: [{ k: "1", h: 2, y: 23.2 }, { k: "2", h: 8, y: 23.6 }, { k: "3", h: 11, y: 22.6 }], aria: t.lookH,
+      }) + marks(t.lookMarks) + `<p class="tip">${t.lookNote}</p>`);
+
       const confZones = c.zones.filter((z) => z.mode !== "percent" && z.thermal && (z.thermal.quality || typeof z.thermal.rmse === "number")).map((z) => {
         const th = z.thermal, q = (t.conf.find(([k]) => k === th.quality) || [])[1] || esc(th.quality || "–");
         const lag = th.lag_hours ?? th.lag;
@@ -902,7 +948,7 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
         (c.optimize !== null ? `<p class="live2">${t.optLive(c.optimize)}</p>` : ""));
 
       // The table of contents is built from the sections actually shown, so the two never drift apart.
-      const order = [day, colors, rules, optimizer, tariff, peak, away, arrival, edit, manual, feedback, safety, learn, confidence, money, settings, faq].filter(Boolean);
+      const order = [day, colors, rules, optimizer, tariff, peak, away, arrival, edit, manual, feedback, look, safety, learn, confidence, money, settings, faq].filter(Boolean);
       const toc = `<nav class="toc" aria-label="${esc(t.tocLabel)}">${order.map((x) => `<button data-go="${x.id}">${t.toc[x.id] || x.h}</button>`).join("")}</nav>`;
       const body = order.map((x, i) => `<section id="${x.id}" aria-labelledby="h-${x.id}"><p class="eyebrow" aria-hidden="true">${String(i + 1).padStart(2, "0")}</p><h2 id="h-${x.id}" tabindex="-1">${x.h}</h2>${x.body}</section>`).join("");
       this.shadowRoot.innerHTML = `<style>${CSS}</style><div class="wrap" lang="${this.langKey}">${hero}${toc}${body}</div>`;
