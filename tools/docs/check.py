@@ -269,6 +269,40 @@ def main() -> None:
         fails += [f"12h: console: {e}" for e in err]
         ctx.close()
 
+        # Fixed price (Norgespris): no wall of price bars, one line that says so
+        df = mock("fixed")
+        ctx, pg, err = open_page(b, df, 820)
+        st = pg.evaluate(f"""() => {{ const r = {CARD};
+            return {{ bars: r.querySelectorAll('.chartwrap svg .pbar').length, flat: r.querySelector('.flatv')?.textContent || '' }}; }}""")
+        check(st["bars"] == 0, f"fixed: {st['bars']} price bars drawn under a fixed price")
+        check("kWh" in st["flat"], f"fixed: no flat price line ({st['flat']!r})")
+        fails += [f"fixed: console: {e}" for e in err]
+        ctx.close()
+
+        # Percent rooms: never a temperature line on the % axis
+        ctx, pg, err = open_page(b, d, 820)
+        pg.evaluate(f"{CARD}.querySelectorAll('[role=tab]')[2].click()")
+        pg.wait_for_timeout(120)
+        check(pg.evaluate(f"{CARD}.querySelectorAll('.chartwrap svg path.exp').length") == 0, "percent: expected temperature drawn on the % axis")
+        fails += [f"percent: console: {e}" for e in err]
+        ctx.close()
+
+        # Touch: a tap shows the hour, a tap outside hides it
+        ctx = b.new_context(viewport={"width": 400, "height": 1000}, has_touch=True, is_mobile=True, locale="en-GB", timezone_id="Europe/Oslo")
+        pg = ctx.new_page()
+        pg.clock.set_fixed_time(__import__("datetime").datetime.fromisoformat(d["now"]))
+        pg.add_init_script(f"window.__MOCK = {__import__('json').dumps(d)};")
+        pg.goto(f"{(Path(__file__).resolve().parent / 'harness.html').as_uri()}?lang=en")
+        pg.wait_for_timeout(400)
+        box = pg.locator("heat-planner-card").locator(".chartwrap svg").bounding_box()
+        pg.touchscreen.tap(box["x"] + box["width"] * 0.6, box["y"] + 100)
+        pg.wait_for_timeout(150)
+        check(bool(pg.evaluate(f"{CARD}.querySelector('.tip')?.textContent")), "touch: tap on the chart shows no tooltip")
+        pg.touchscreen.tap(10, 10)
+        pg.wait_for_timeout(150)
+        check(not pg.evaluate(f"!!{CARD}.querySelector('.tip')"), "touch: tap outside does not hide the tooltip")
+        ctx.close()
+
         # States
         expect = {"loading": "[aria-busy=true]", "error": "button[data-fk=retry]", "empty": "a[data-fk=setup]",
                   "nozones": "a[data-fk=integration]", "stale": ".notice", "unavailable": ".notice"}

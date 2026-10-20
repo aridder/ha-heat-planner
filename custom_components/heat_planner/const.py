@@ -8,7 +8,7 @@ from typing import Final
 from homeassistant.const import Platform
 
 DOMAIN: Final = "heat_planner"
-VERSION: Final = "0.5.0"
+VERSION: Final = "0.6.0"
 
 PLATFORMS: Final = [Platform.SENSOR, Platform.SWITCH, Platform.NUMBER, Platform.SELECT]
 
