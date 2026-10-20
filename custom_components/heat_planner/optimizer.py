@@ -536,7 +536,7 @@ def _label(
         warm is not None and act is not None and h.ref < act <= warm + 1e-9
     ):
         mode = "off" if act is None else "save" if act < h.ref else "preheat"
-        return replace(s, target=act, mode=mode, reasons=reasons + [R_PEAK], predicted=None,
+        return replace(s, target=act, mode=mode, reasons=[*reasons, R_PEAK], predicted=None,
                        duty=0.0, kwh=0.0, cost=None)
     if act is None:
         reasons += [R_EXTREME_OFF if s.level == LEVEL_EXTREME else R_EXPENSIVE, R_OPTIMIZED]
