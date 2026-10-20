@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.1
+
+- **Look back:** the card now has *Plan / Last 24 h / Last 48 h*. The past view shows:
+  - the measured room temperature against the target as it was applied, with the price
+  - markers for manual changes, capacity set-backs and heating off
+  - the house's hourly energy against the cap
+  - a summary: average vs target, hours below target, kWh and estimated cost
+- **History log:** kept for 7 days and filled in from Home Assistant's own history the first time, so the last 48 hours show up immediately. Available over the websocket command `heat_planner/history`.
+- **Help:** new "Look back" section.
+
 ## Unreleased
 
 ### Look back
