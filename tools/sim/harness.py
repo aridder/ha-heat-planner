@@ -481,9 +481,17 @@ class Controller:
                 zid for zid, p in self.plans.items()
                 if p.hours and too_cold(zones[zid], p.hours[0], self.room_temperature(zid, now))
             }
+            fragile = set()
+            if hasattr(_control, "SHED_MARGIN"):
+                fragile = {
+                    zid for zid, p in self.plans.items()
+                    if p.hours and too_cold(zones[zid], p.hours[0], self.room_temperature(zid, now),
+                                            _control.SHED_MARGIN)
+                }
             smooth = self.meter.projected(now, smooth=True)
+            extra = {"fragile": fragile} if fragile else {}
             self.shed = live_shed(projected if smooth is None else smooth, self.peak_cap, self.plans, zones,
-                                  priority, self.shed, now, holding)
+                                  priority, self.shed, now, holding, **extra)
         else:
             self.shed = live_shed(projected, self.peak_cap, self.plans, zones, priority, self.shed, now)
 

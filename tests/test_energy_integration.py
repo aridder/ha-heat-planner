@@ -101,10 +101,19 @@ async def test_capacity_limit_spreads_heating(hass: HomeAssistant, setup_states,
         # elsewhere today cannot lower today's peak and are dropped again
         today = now.date()
         assert not any(R_PEAK in h.reasons for h in coord.plans["stue"].hours if h.start.date() == today)
-        # without a protected window the lowest-priority room gives way
+        # without a protected window: the optimiser plans the budget with stored heat only –
+        # an occupied room is never planned below its schedule for the capacity step
         await coord.async_set_settings("stue", {"protected_from_hour": 0, "protected_to_hour": 0})
         await coord.async_set_settings("kjokken", {"protected_from_hour": 0, "protected_to_hour": 0})
         await hass.async_block_till_done()
+        for p in coord.plans.values():
+            assert all(h.target is not None and h.target >= h.scheduled for h in p.hours
+                       if h.start.hour >= 6 and R_PEAK in h.reasons)
+        # the rules give way in the lowest-priority room (at most PEAK_SLACK)
+        await coord.async_set_settings(None, {"optimize": False})
+        await coord.async_refresh()
+        await hass.async_block_till_done()
+        assert coord.plans["stue"].method == "rules"
     stue, kjokken = coord.plans["stue"], coord.plans["kjokken"]
     assert any(R_PEAK in h.reasons for h in stue.hours)
     # never below the safety floor, whatever was cut – nor more than PEAK_SLACK below the schedule

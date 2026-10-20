@@ -58,6 +58,7 @@ from .control import (
     round_step,
     safety_hold,
     settle,
+    SHED_MARGIN,
     too_cold,
 )
 from .energy import (
@@ -635,10 +636,14 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             zid for zid, p in self.plans.items()
             if p.hours and too_cold(zones[zid], p.hours[0], self.room_temperature(zid))
         }
+        fragile = {
+            zid for zid, p in self.plans.items()
+            if p.hours and too_cold(zones[zid], p.hours[0], self.room_temperature(zid), SHED_MARGIN)
+        }
         smooth = self._meter.projected(now, smooth=True)
         self._shed = live_shed(
             projected if smooth is None else smooth, state.cap_kw, self.plans, zones, priority,
-            self._shed, now, holding,
+            self._shed, now, holding, fragile,
         )
 
     async def _async_update_data(self) -> dict[str, Any]:

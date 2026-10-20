@@ -155,14 +155,22 @@ def settle(
     return last["value"] if abs(value - last["value"]) <= tol + 0.01 else value
 
 
-def too_cold(zone: ZoneConfig, hour: PlanHour, room: float | None) -> bool:
-    """The room is already more than half ``PEAK_SLACK`` below its own schedule/away floor."""
+SHED_MARGIN = 0.2  # °C above too_cold() a room must be for the live guard to set it back
+
+
+def too_cold(zone: ZoneConfig, hour: PlanHour, room: float | None, margin: float = 0.0) -> bool:
+    """The room is already more than half ``PEAK_SLACK`` below its own schedule/away floor.
+
+    With ``margin`` (see ``SHED_MARGIN``): closer than that to it – such a room is not set
+    back by the live guard. Without that hysteresis a room near the line was set back,
+    released as "too cold" a minute later and set back again (36 writes in an evening).
+    """
     from .energy import PEAK_SLACK
     from .planner import comfort_reference
 
     if zone.is_percent or room is None:
         return False
-    return room < comfort_reference(zone, hour) - PEAK_SLACK / 2
+    return room < comfort_reference(zone, hour) - PEAK_SLACK / 2 + margin
 
 
 def needs_write(
@@ -260,12 +268,14 @@ def live_shed(
     shed: dict[str, datetime],
     now: datetime,
     holding: set[str] | frozenset[str] = frozenset(),
+    fragile: set[str] | frozenset[str] = frozenset(),
 ) -> dict[str, datetime]:
     """Zones to set back until the end of this hour (``{zone: until}``).
 
     Zones in ``holding`` (near their safety floor, see :func:`safety_hold`, or
     already well below their schedule, see :func:`too_cold`) are never set back
-    and are released at once if they were.
+    and are released at once if they were. Zones in ``fragile`` (close to that,
+    ``too_cold(..., margin=SHED_MARGIN)``) are not set back, but stay set back if they are.
     """
     left = 1 - (now.minute * 60 + now.second) / 3600
     end_of_hour = hour_key(now) + timedelta(hours=1)  # real time, also on DST days
@@ -281,7 +291,7 @@ def live_shed(
             "kw": draw * left,  # relief for the rest of this hour (kWh)
             # (percent zones have no sensor: a set-back regulator is not seen recovering)
             "protected": is_protected(zone, p.hours[0].start) or draw < 0.05 or zid in holding
-            or zone.is_percent,
+            or zone.is_percent or (zid in fragile and zid not in shed),
         })
     shed = {z: until for z, until in shed.items() if until > now and z not in holding}
     relief = sum(i["kw"] for i in items if not i["protected"] and i["zone_id"] not in shed)
@@ -390,7 +400,31 @@ def plan_peaks(
             new_plan = replan(zid, dict(kw_caps[zid]))
             if new_plan is not None:
                 current[zid] = new_plan
-    return current
+    if not kw_caps:
+        return current
+    # Budgets are kept only on days where they lower the day's peak (or the day was
+    # already under its cap: the margin budgets): a day whose peak is set where nothing
+    # can move (a protected warm-up at full power) gains nothing from storing heat
+    # elsewhere – it only costs the extra losses. Of the plans without budgets, with all
+    # of them and with the useful ones, the one with the least overshoot of the caps wins
+    # (ties: the fewest changes), so the budgets can never make the house peak higher.
+    before, after = day_peaks(plans, caps, base), day_peaks(current, caps, base)
+    useful = {d for d, v in after.items() if before.get(d, 0.0) <= 0.0 or v < before.get(d, 0.0) - 0.05}
+    kept = {z: {h: v for h, v in acc.items() if h.date() in useful} for z, acc in kw_caps.items()}
+    candidates = [dict(plans), current]
+    if kept != kw_caps:
+        filtered = dict(plans)
+        for zid, acc in kept.items():
+            if acc:
+                new_plan = replan(zid, dict(acc))
+                if new_plan is not None:
+                    filtered[zid] = new_plan
+        candidates.insert(1, filtered)
+
+    def overshoot(candidate: dict[str, Plan]) -> float:
+        return round(sum(max(0.0, v) for v in day_peaks(candidate, caps, base).values()), 2)
+
+    return min(candidates, key=overshoot)
 
 
 def limit_peaks(

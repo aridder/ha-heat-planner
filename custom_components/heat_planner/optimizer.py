@@ -186,6 +186,7 @@ def optimize_zone(
         for c in capped:
             free.update(range(max(0, c - PEAK_PREP_HOURS - lag_h), c + 1))
 
+    cap_hold: set[int] = set()
     hours: list[_Hour] = []
     for i, s in enumerate(slots):
         t_out = outdoor.get(s.start, outdoor_default)
@@ -202,10 +203,7 @@ def optimize_zone(
             else w.night_from <= s.start.hour < w.night_to
         )
         if s.start in kw_cap and not percent and not away and not night:
-            # a capacity budget is met with heat stored before the hour, never by setting an
-            # occupied room below its schedule (a thermostat 0.5 °C lower lets the room sag
-            # 0.8 °C before it restarts – the benchmark's kitchen during cooking)
-            no_lower = True
+            cap_hold.add(i)
         acts = _actions(zone, ref, shift_max, raise_max, no_lower, floor)
         if free is not None and i not in free:
             acts = [round(ref) if percent else round(ref * 2) / 2]
@@ -263,6 +261,14 @@ def optimize_zone(
         lift = w.cap_margin if h.cap is not None else 0.0
         h.ref_temps = tuple(ref_flat[g] + lift for g in idx)
         h.w_sub = tuple(w_flat[g] for g in idx)
+        if i in cap_hold and ref_flat[min(last, (i + 1) * SUBSTEPS - 1)] >= h.ref - 0.3:
+            # a capacity budget is met with heat stored before the hour, never by setting an
+            # occupied room that the schedule holds below it (a thermostat 0.5 °C lower lets
+            # the room sag 0.8 °C before it restarts – the benchmark's kitchen while cooking).
+            # Only where the schedule itself is still climbing to a new step may a lower
+            # setpoint spread that climb.
+            keep = [a for a in h.actions if a is not None and a >= h.ref - 0.25]
+            h.actions = keep or [round(h.ref * 2) / 2]
 
     # Temperature grid.
     all_refs = ref_flat
@@ -453,7 +459,7 @@ def _hour_cost(
     floor = zone.safety_min_temp
     a, b0, bd, affine = h.a, h.b0, h.bd, h.affine
     refs, wsub = h.ref_temps, h.w_sub
-    lin = w.linear / w.comfort if w.comfort > 0 else 0.0
+    lin = w.linear  # (w_sub already carries the comfort weight)
     band = w.band
     if affine and not percent and act is not None and bd > 0:
         # fast path (the common case): thermostat on an affine room model

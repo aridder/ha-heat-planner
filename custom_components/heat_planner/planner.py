@@ -512,7 +512,7 @@ def build_plan(
                 if flat:
                     # nothing worth shifting for price: plan for the capacity budget only
                     mean = sum(horizon) / len(horizon)
-                    opt_prices = {h: mean for h in prices}
+                    opt_prices = dict.fromkeys(prices, mean)
                 slots = optimize_zone(
                     zone, slots, opt_prices, room_temp, outdoor or {}, outdoor_default,
                     solar=solar, kw_cap=kw_cap, weights=optimizer_weights,

@@ -138,7 +138,7 @@ def test_plan_peaks_stores_heat_before_the_peak_instead_of_setting_back():
     assert kwh(out, (17, 18)) < kwh(before, (17, 18)) - 0.3
     assert kwh(out, (13, 14, 15, 16)) > kwh(before, (13, 14, 15, 16))
     # comfort first: the room coasts on stored heat, it is not held below its schedule
-    assert all(h.predicted >= h.scheduled + slow.comfort - 0.1 for h in out.hours)
+    assert all(h.predicted >= h.scheduled - 0.1 for h in out.hours)
 
 
 def test_capacity_budget_under_norgespris_is_not_price_shifting():
