@@ -56,6 +56,7 @@ _INF = float("inf")
 _SETPOINT_STEPS = (0.5, 1.0, 2.0, 3.0, 4.0)
 _PERCENT_STEPS = (10.0, 20.0, 30.0, 40.0, 60.0)
 _MAX_BINS = 80
+PEAK_PREP_HOURS = 4  # peak_only: hours before a budget hour in which heat may be stored
 
 
 @dataclass
@@ -170,6 +171,18 @@ def optimize_zone(
     n = len(slots)
     prot = [is_protected(zone, s.start) for s in slots]
 
+    # Capacity budget only (nothing worth shifting for price): the plan may only change
+    # in the hours that store heat for a budget hour (up to PEAK_PREP_HOURS plus the dead
+    # time before it) and in the budget hour itself. Free everywhere, a flat-price run
+    # re-shaped the whole day – stopping early in the evening (0.5 °C under the schedule)
+    # and pre-heating at night for the next day's cooking peak.
+    free: set[int] | None = None
+    if peak_only:
+        free = set()
+        capped = [i for i, s in enumerate(slots) if s.start in kw_cap]
+        for c in capped:
+            free.update(range(max(0, c - PEAK_PREP_HOURS - lag_h), c + 1))
+
     hours: list[_Hour] = []
     for i, s in enumerate(slots):
         t_out = outdoor.get(s.start, outdoor_default)
@@ -180,7 +193,19 @@ def optimize_zone(
         no_lower = protected or prot[min(n - 1, i + lag_h)]
         away = R_AWAY in s.reasons
         ref = comfort_reference(zone, s)
+        night = (
+            s.start.hour >= w.night_from or s.start.hour < w.night_to
+            if w.night_from > w.night_to
+            else w.night_from <= s.start.hour < w.night_to
+        )
+        if s.start in kw_cap and not percent and not away and not night:
+            # a capacity budget is met with heat stored before the hour, never by setting an
+            # occupied room below its schedule (a thermostat 0.5 °C lower lets the room sag
+            # 0.8 °C before it restarts – the benchmark's kitchen during cooking)
+            no_lower = True
         acts = _actions(zone, ref, shift_max, raise_max, no_lower, floor)
+        if free is not None and i not in free:
+            acts = [round(ref) if percent else round(ref * 2) / 2]
         goal = (warmup or {}).get(i)
         if goal is not None and not percent:
             # comfort first: a warm-up hour holds at least the coming target (if the room
@@ -195,11 +220,6 @@ def optimize_zone(
             and (floor is None or ref >= floor)
         ):
             acts.append(None)
-        night = (
-            s.start.hour >= w.night_from or s.start.hour < w.night_to
-            if w.night_from > w.night_to
-            else w.night_from <= s.start.hour < w.night_to
-        )
         if protected or (not percent and ref > zone.comfort + 0.01 and not away):
             mult = w.comfort_high
         elif away or night:

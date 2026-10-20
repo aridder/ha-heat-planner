@@ -243,6 +243,11 @@ class HourMeter:
             return None
         left = elapsed(hour + timedelta(hours=1), last[0]).total_seconds() / 3600
         rate = self.avg_kw if smooth and self.avg_kw is not None else last[1]
+        if smooth and elapsed(now, hour).total_seconds() < AVG_SECONDS:
+            # early in the hour the average still carries the previous hour (the cooking
+            # that just ended): the live guard set rooms back at 19:00 for an hour that
+            # ended a kilowatt under the cap, and they recovered late (benchmark)
+            rate = min(rate, last[1])
         return self.kwh + rate * max(0.0, left)
 
 
