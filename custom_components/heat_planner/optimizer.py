@@ -73,10 +73,11 @@ class OptimizerWeights:
     # plus, per °C · h more than ``band`` below the reference, a linear term: the
     # quadratic penalty alone made dips of 0.3–0.5 °C look nearly free (a capacity
     # budget was then met by letting a room sag instead of storing heat before)
-    linear: float = float(__import__("os").environ.get("HP_LIN", "1.0"))  # TMP
-    band: float = float(__import__("os").environ.get("HP_BAND", "0.2"))  # TMP
-    above: float = float(__import__("os").environ.get("HP_ABOVE", "0.1"))  # TMP
-    cap_margin: float = float(__import__("os").environ.get("HP_CM", "0.3"))  # TMP °C above the reference in hours with a kW budget
+    linear: float = 1.0
+    band: float = 0.2  # °C
+    above: float = 0.1  # per °C · h above the reference (linear, small)
+    # °C above the reference aimed for in hours with a capacity budget (``kw_cap``)
+    cap_margin: float = 0.3
     peak: float | None = None  # per kW above the cap; None = 10 × average price
     terminal: float = 1.0  # reheat units per °C the horizon ends below reference
     min_gain: float = 0.02  # reheat units an hour must gain before leaving the schedule
