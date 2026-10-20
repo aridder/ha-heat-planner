@@ -356,9 +356,11 @@ def plan_peaks(
             excess = sum(kw for _, kw in entries) + base.get(start.hour, 0.0) - cap
             if excess <= -PEAK_TIGHT_KW:
                 continue
-            # percent zones have no sensor: their heat is not moved for the budget
-            ok = [(z, kw) for z, kw in entries
-                  if z in zones and not zones[z].is_percent and not is_protected(zones[z], start)]
+            # percent zones have no sensor: their heat is not moved for the budget. A
+            # protected hour does get a budget: the optimiser never lowers it below the
+            # schedule, but a budget stops it pre-heating every room at once there (April:
+            # all rooms on at 14:00 in a cheap solar hour, 5.1 kW)
+            ok = [(z, kw) for z, kw in entries if z in zones and not zones[z].is_percent]
             # a tight hour: rooms already planned to coast through it get a zero budget
             # too, so they are planned with the same margin (a room that wakes its
             # thermostat there sets the day's peak)

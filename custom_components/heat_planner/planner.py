@@ -847,7 +847,8 @@ def _coast(zone: ZoneConfig, slots: list[PlanHour], kw_cap: dict[datetime, float
     prev = room_temp
     for s in slots:
         start_t, prev = prev, s.predicted if s.predicted is not None else prev
-        if s.start not in kw_cap or s.target is None or s.duty > 0.05 or s.predicted is None:
+        if (s.start not in kw_cap or s.target is None or s.duty > 0.05 or s.predicted is None
+                or is_protected(zone, s.start)):
             continue
         if min(start_t, s.predicted) < s.target + COAST_MARGIN:
             continue

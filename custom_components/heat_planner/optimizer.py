@@ -76,7 +76,10 @@ class OptimizerWeights:
     # budget was then met by letting a room sag instead of storing heat before)
     linear: float = 1.0
     band: float = 0.2  # °C
-    above: float = 0.1  # per °C · h above the reference (linear, small)
+    # per °C · h above the reference: 0 – the extra losses of a warmer room are already
+    # paid in the model; a penalty on top (0.1 before) kept pre-heating out of the cheap
+    # hours of a cold spell (benchmark, January spot: 13–17 kr per 14 days)
+    above: float = 0.0
     # °C above the reference aimed for in hours with a capacity budget (``kw_cap``)
     cap_margin: float = 0.3
     peak: float | None = None  # per kW above the cap; None = 10 × average price
