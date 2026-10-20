@@ -155,6 +155,7 @@ class Metrics:
     heat_kwh: float = 0.0
     deficit: dict[str, float] = field(default_factory=dict)  # °C·h below target while home
     band: float = 0.0  # °C·h below target − COMFORT_BAND while home
+    band_rooms: dict[str, float] = field(default_factory=dict)
     below18: float = 0.0
     overheat: float = 0.0
     max_cold_h: float = 0.0
@@ -206,6 +207,7 @@ def run(strategy: Strategy, case: Case) -> dict[str, Any]:
                     m.deficit[zid] += gap / 60
                     if gap > COMFORT_BAND:
                         m.band += (gap - COMFORT_BAND) / 60
+                        m.band_rooms[zid] = m.band_rooms.get(zid, 0.0) + (gap - COMFORT_BAND) / 60
                 if gap > COLD_MARGIN:
                     cold_run[zid] += 1
                     m.max_cold_h = max(m.max_cold_h, cold_run[zid] / 60)
@@ -241,6 +243,7 @@ def run(strategy: Strategy, case: Case) -> dict[str, Any]:
         "deficit": round(sum(m.deficit.values()), 2),
         "deficit_band": round(m.band, 2),
         "deficit_rooms": {k: round(v, 2) for k, v in m.deficit.items()},
+        "band_rooms": {z: round(m.band_rooms.get(z, 0.0), 2) for z in zones},
         "below18": round(m.below18, 2), "overheat": round(m.overheat, 2),
         "max_cold_h": round(m.max_cold_h, 2),
         "writes_day": round(m.writes / case.days, 1),

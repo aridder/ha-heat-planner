@@ -274,15 +274,19 @@ def live_shed(
             "zone_id": zid,
             "priority": priority.get(zid, 0),
             "kw": draw * left,  # relief for the rest of this hour (kWh)
-            "protected": is_protected(zone, p.hours[0].start) or draw < 0.05 or zid in holding,
+            # (percent zones have no sensor: a set-back regulator is not seen recovering)
+            "protected": is_protected(zone, p.hours[0].start) or draw < 0.05 or zid in holding
+            or zone.is_percent,
         })
     shed = {z: until for z, until in shed.items() if until > now and z not in holding}
     relief = sum(i["kw"] for i in items if not i["protected"] and i["zone_id"] not in shed)
     if projected - relief > cap_kw:
         # Even setting back every room cannot keep this hour under the cap: it only
         # costs comfort, and the reheat next hour made the month's top-3 *higher*
-        # than without limiting in the simulation. Let this hour go.
-        return {}
+        # than without limiting in the simulation. Let this hour go – but a room already
+        # set back stays so until the hour ends (released mid-hour, it reheated at full
+        # power on top of the peak and was shed again: two extra writes for nothing).
+        return dict(shed)
     out = realtime_shed(projected, cap_kw, items, currently_shed=list(shed))
     # once shed, a room stays set back until the hour ends (no flapping)
     return {z: shed.get(z, end_of_hour) for z in set(out) | set(shed)}
@@ -304,6 +308,82 @@ def day_peaks(
         over = v + base.get(start.hour, 0.0) - caps.get(start, 1e9)
         out[start.date()] = max(out.get(start.date(), -1e9), over)
     return out
+
+
+PEAK_TIGHT_KW = 0.5  # plan_peaks: an hour this close to its cap counts as tight
+
+
+def plan_peaks(
+    zones: dict[str, ZoneConfig],
+    plans: dict[str, Plan],
+    caps: dict[datetime, float],
+    base: dict[int, float],
+    priority: dict[str, int],
+    replan: Callable[[str, dict[datetime, float]], Plan | None],
+    *,
+    rounds: int = 3,
+) -> dict[str, Plan]:
+    """Capacity tariff planned *with* the heating (optimiser): per-zone kW budgets.
+
+    The house cap minus the rest of the house (``base``, a high estimate per hour of
+    day) is the heating budget of each hour. Where the planned rooms exceed it, the
+    excess is shared out as a lower ``kw_cap`` for those zones (lowest priority
+    first, in proportion to what each draws then; never in a zone's protected window,
+    never for a percent zone, which has no sensor to plan its stored heat with)
+    and ``replan(zone_id, kw_cap)`` plans them again: the optimiser then stores heat
+    in the floors in the hours with headroom (pre-heating before the cooking peak)
+    instead of the room simply being set back in the peak hour, which is what
+    :func:`limit_peaks` does after the fact. Repeated a few rounds, because heat
+    moved into an earlier hour can make that hour the one over budget.
+    """
+    kw_caps: dict[str, dict[datetime, float]] = {}
+    current = dict(plans)
+    for _ in range(rounds):
+        by_hour: dict[datetime, list[tuple[str, float]]] = {}
+        for zid, p in current.items():
+            for h in p.hours:
+                by_hour.setdefault(h.start, []).append((zid, h.kwh))
+        changed: set[str] = set()
+        for start, entries in by_hour.items():
+            cap = caps.get(start)
+            if cap is None:
+                continue
+            excess = sum(kw for _, kw in entries) + base.get(start.hour, 0.0) - cap
+            if excess <= -PEAK_TIGHT_KW:
+                continue
+            # percent zones have no sensor: their heat is not moved for the budget
+            ok = [(z, kw) for z, kw in entries
+                  if z in zones and not zones[z].is_percent and not is_protected(zones[z], start)]
+            # a tight hour: rooms already planned to coast through it get a zero budget
+            # too, so they are planned with the same margin (a room that wakes its
+            # thermostat there sets the day's peak)
+            for zid, kw in ok:
+                if kw <= 0.02 and start not in kw_caps.get(zid, {}):
+                    kw_caps.setdefault(zid, {})[start] = 0.0
+                    changed.add(zid)
+            if excess <= 0.05:
+                continue
+            movable = [(z, kw) for z, kw in ok if kw > 0.02]
+            for prio in sorted({priority.get(z, 0) for z, _ in movable}):
+                group = [(z, kw) for z, kw in movable if priority.get(z, 0) == prio]
+                avail = sum(kw for _, kw in group)
+                share = min(1.0, excess / avail) if avail > 0 else 0.0
+                for zid, kw in group:
+                    new = round(max(0.0, kw * (1 - share)), 3)
+                    acc = kw_caps.setdefault(zid, {})
+                    if new < acc.get(start, 1e9) - 1e-3:
+                        acc[start] = new
+                        changed.add(zid)
+                excess -= avail * share
+                if excess <= 0.05:
+                    break
+        if not changed:
+            break
+        for zid in sorted(changed):
+            new_plan = replan(zid, dict(kw_caps[zid]))
+            if new_plan is not None:
+                current[zid] = new_plan
+    return current
 
 
 def limit_peaks(

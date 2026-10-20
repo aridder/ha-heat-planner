@@ -37,6 +37,7 @@ from .planner import (
     R_EXTREME_OFF,
     R_PREHEAT,
     R_PREHEAT_EXTREME,
+    R_PEAK,
     R_PROTECTED,
     R_WARMUP,
     PlanHour,
@@ -69,7 +70,13 @@ class OptimizerWeights:
     comfort: float = 1.0  # per (°C below reference)² · h, normal hours
     comfort_high: float = 3.0  # multiplier in comfort/protected hours
     comfort_low: float = 0.3  # multiplier when away or at night
-    above: float = 0.1  # per °C · h above the reference (linear, small)
+    # plus, per °C · h more than ``band`` below the reference, a linear term: the
+    # quadratic penalty alone made dips of 0.3–0.5 °C look nearly free (a capacity
+    # budget was then met by letting a room sag instead of storing heat before)
+    linear: float = float(__import__("os").environ.get("HP_LIN", "1.0"))  # TMP
+    band: float = float(__import__("os").environ.get("HP_BAND", "0.2"))  # TMP
+    above: float = float(__import__("os").environ.get("HP_ABOVE", "0.1"))  # TMP
+    cap_margin: float = float(__import__("os").environ.get("HP_CM", "0.3"))  # TMP °C above the reference in hours with a kW budget
     peak: float | None = None  # per kW above the cap; None = 10 × average price
     terminal: float = 1.0  # reheat units per °C the horizon ends below reference
     min_gain: float = 0.02  # reheat units an hour must gain before leaving the schedule
@@ -109,6 +116,7 @@ def optimize_zone(
     *,
     initial_off_run: int = 0,
     warmup: dict[int, float] | None = None,
+    peak_only: bool = False,
 ) -> list[PlanHour]:
     """Return new slots with optimised targets (simulation fields are not filled).
 
@@ -121,6 +129,10 @@ def optimize_zone(
     follows that warm-up (the room is meant to *be* at the new target when the step
     begins) and the warm-up target is one of the actions of those hours; the
     optimiser may still warm up earlier, in cheaper hours.
+
+    ``peak_only``: the prices carry nothing worth shifting (Norgespris) and the run is
+    for the capacity budget ``kw_cap`` alone; changed hours are labelled ``peak_limit``
+    instead of as price decisions.
 
     Falls back to ``slots`` unchanged when the room temperature is unknown,
     there are no prices, or ``price_aggressiveness`` is 0.
@@ -193,7 +205,7 @@ def optimize_zone(
             mult = w.comfort_low
         else:
             mult = 1.0
-        price = s.price if s.price is not None else prices.get(s.start)
+        price = prices.get(s.start, s.price)
         hours.append(
             _Hour(
                 out=t_out, a=a, b0=b0, bd=bd, affine=affine, sol=sol,
@@ -221,7 +233,11 @@ def optimize_zone(
     last = len(ref_flat) - 1
     for i, h in enumerate(hours):
         idx = [min(last, i * SUBSTEPS + j + n_lag) for j in range(SUBSTEPS)]
-        h.ref_temps = tuple(ref_flat[g] for g in idx)
+        # an hour with a capacity budget is coasted through on stored heat: aim that much
+        # above the reference, so a model that is a little off (a room that cools faster
+        # than believed) does not wake the thermostat in the peak hour
+        lift = w.cap_margin if h.cap is not None else 0.0
+        h.ref_temps = tuple(ref_flat[g] + lift for g in idx)
         h.w_sub = tuple(w_flat[g] for g in idx)
 
     # Temperature grid.
@@ -310,7 +326,7 @@ def optimize_zone(
                 best, best_act, best_t = cost, act, t_end
         run = run + 1 if best_act is None else 0
         temp = best_t
-        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4], warm.get(i)))
+        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4], warm.get(i), peak_only))
     return out
 
 
@@ -413,6 +429,8 @@ def _hour_cost(
     floor = zone.safety_min_temp
     a, b0, bd, affine = h.a, h.b0, h.bd, h.affine
     refs, wsub = h.ref_temps, h.w_sub
+    lin = w.linear / w.comfort if w.comfort > 0 else 0.0
+    band = w.band
     if affine and not percent and act is not None and bd > 0:
         # fast path (the common case): thermostat on an affine room model
         lim = floor - 1e-6
@@ -430,7 +448,7 @@ def _hour_cost(
                 return None
             diff = refs[j] - temp
             if diff > 0:
-                deficit += wsub[j] * diff * diff
+                deficit += wsub[j] * (diff * diff + (lin * (diff - band) if diff > band else 0.0))
             else:
                 above -= diff
         return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
@@ -457,7 +475,7 @@ def _hour_cost(
         duty_sum += d
         diff = refs[j] - temp
         if diff > 0:
-            deficit += wsub[j] * diff * diff
+            deficit += wsub[j] * (diff * diff + (lin * (diff - band) if diff > band else 0.0))
         else:
             above -= diff
     return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
@@ -478,11 +496,18 @@ def _finish(
 def _label(
     zone: ZoneConfig, s: PlanHour, h: _Hour, act: float | None, ahead: list[PlanHour],
     warm: float | None = None,
+    peak_only: bool = False,
 ) -> PlanHour:
     """Copy of ``s`` with the chosen target and consistent mode/reasons."""
     base_reasons = [r for r in s.reasons if r in ("schedule", "override", R_AWAY)]
     reasons = list(base_reasons)
     costly = s.level in (LEVEL_EXPENSIVE, LEVEL_EXTREME)
+    if peak_only and (act is None or abs(act - h.ref) > 1e-9) and not (
+        warm is not None and act is not None and h.ref < act <= warm + 1e-9
+    ):
+        mode = "off" if act is None else "save" if act < h.ref else "preheat"
+        return replace(s, target=act, mode=mode, reasons=reasons + [R_PEAK], predicted=None,
+                       duty=0.0, kwh=0.0, cost=None)
     if act is None:
         reasons += [R_EXTREME_OFF if s.level == LEVEL_EXTREME else R_EXPENSIVE, R_OPTIMIZED]
         mode = "off"

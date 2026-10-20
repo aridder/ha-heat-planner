@@ -39,6 +39,7 @@ R_EXTREME_OFF = "extreme_off"
 R_PROTECTED = "protected"
 R_SAFETY = "safety"
 R_WARMUP = "warmup"
+R_PEAK = "peak_limit"  # capacity tariff (the month's top-3 hours)
 
 WARMUP_MAX_HOURS = 6  # longest warm-up before a schedule step (plus the floor's dead time)
 WARMUP_TOLERANCE = 0.1  # °C: "reached" when the modelled room is this close to the new target
@@ -379,6 +380,7 @@ def build_plan(
     ``initial_off_run`` is how many hours heating has already been off right
     before ``start``; it counts toward ``max_off_hours``.
     """
+    local_tz = start.tzinfo
     starts = hours_from(start, hours)
     start = starts[0] if starts else hour_key(start)
     # one key per real hour (DST): see hour_key
@@ -391,7 +393,19 @@ def build_plan(
 
     slots: list[PlanHour] = []
     away_active = away_now
-    for t in starts:
+    # Percent zones (regulators) move heat from a lowered hour into the hours just before
+    # it (see _balance_percent). The hours already gone that this can involve are
+    # planned again too, so every re-plan makes the same choice for the hours to come.
+    pre: list[datetime] = []
+    if zone.is_percent and starts:
+        n_pre = 2 * PERCENT_WINDOW
+        pre = hours_from(start - timedelta(hours=n_pre), n_pre, local_tz)
+    n_pre_slots = len(pre)
+    for idx, t in enumerate(pre + starts):
+        if idx == n_pre_slots:
+            away_active = away_now
+        elif idx < n_pre_slots:
+            away_active = False  # (whether anyone was away then is not known here)
         price = prices.get(t)
         level = levels.get(t, LEVEL_NORMAL)
         sched, is_override = scheduled_value(zone, schedule, overrides, t)
@@ -473,10 +487,12 @@ def build_plan(
             )
         )
 
-    _cap_off_runs(zone, slots, initial_off_run)
     if zone.is_percent:
+        _cap_off_runs(zone, slots, 0)
         _balance_percent(zone, slots)
-    refs = [comfort_reference(zone, s) for s in slots]
+        slots = slots[n_pre_slots:]
+    _cap_off_runs(zone, slots, initial_off_run)
+    refs =[comfort_reference(zone, s) for s in slots]
     used = "rules"
     warm = warmup_targets(zone, slots, refs, room_temp, outdoor or {}, outdoor_default, solar)
     if method != "optimize" and room_temp is not None and not zone.is_percent:
@@ -492,10 +508,15 @@ def build_plan(
         flat = bool(horizon) and max(horizon) - min(horizon) < rules.min_spread
         try:
             if not flat or kw_cap:
+                opt_prices = prices
+                if flat:
+                    # nothing worth shifting for price: plan for the capacity budget only
+                    mean = sum(horizon) / len(horizon)
+                    opt_prices = {h: mean for h in prices}
                 slots = optimize_zone(
-                    zone, slots, prices, room_temp, outdoor or {}, outdoor_default,
+                    zone, slots, opt_prices, room_temp, outdoor or {}, outdoor_default,
                     solar=solar, kw_cap=kw_cap, weights=optimizer_weights,
-                    initial_off_run=initial_off_run, warmup=warm,
+                    initial_off_run=initial_off_run, warmup=warm, peak_only=flat,
                 )
                 used = "optimize"
                 optimized = True
@@ -509,6 +530,9 @@ def build_plan(
         # e.g. capacity-tariff cuts decided across all zones; simulated like the rest
         adjust(slots)
     _simulate_with(zone, slots, room_temp, outdoor or {}, outdoor_default, solar)
+    if kw_cap and optimized and room_temp is not None and not zone.is_percent:
+        if _coast(zone, slots, kw_cap, room_temp):
+            _simulate_with(zone, slots, room_temp, outdoor or {}, outdoor_default, solar)
 
     # Baseline: same schedule (with its warm-up), no price logic, nobody away.
     base_slots = [
@@ -740,48 +764,107 @@ def warmup_targets(
     return warm
 
 
-def _balance_percent(zone: ZoneConfig, slots: list[PlanHour]) -> None:
-    """Percent zones: move heat between hours instead of removing it.
+PERCENT_WINDOW = 3  # hours before a lowered hour that a percent zone pre-heats in
 
-    A regulator has no thermostat to make up later for what the expensive hours took
-    away, so the rules' −``price_shift`` there (and the smaller +``preheat`` before them)
-    simply left the room colder (the benchmark's bathroom: twice the comfort deficit of a
-    plain schedule). Per day, the percentage-hours taken from expensive hours (OFF hours
-    included) beyond what pre-heating added are given back in that day's cheapest hours
-    that are neither lowered nor away, at most ``price_shift`` points each.
+
+def _balance_percent(zone: ZoneConfig, slots: list[PlanHour]) -> None:
+    """Percent zones: move heat into the hours just before a lowered hour, never remove it.
+
+    A regulator has no sensor, so nothing makes up afterwards for what an expensive hour
+    took: the rules' −``price_shift`` there (and OFF in extreme hours) left the room
+    colder, and heat "given back" in the day's cheapest hours (often the night, or after
+    the cut) came too early or too late to help (the benchmark's bathroom: up to six
+    times the plain schedule's comfort deficit in a cold spell). Now the percentage-hours
+    taken from each lowered hour are put back in the ``PERCENT_WINDOW`` hours before it
+    (cheapest first, at most ``price_shift`` points above the schedule each; the rules'
+    own pre-heat in that window counts), so the room is warm when the heat is taken.
+    What cannot be put back there is not taken: the cut is made smaller (an OFF hour
+    becomes a lowered one).
     """
-    by_day: dict[date, list[PlanHour]] = {}
-    for s in slots:
-        by_day.setdefault(s.start.date(), []).append(s)
-    for day_slots in by_day.values():
-        debt = 0.0
-        for s in day_slots:
-            if R_AWAY in s.reasons:
-                continue
-            target = 0.0 if s.target is None else s.target
-            debt += s.scheduled - target if R_EXPENSIVE in s.reasons or R_EXTREME_OFF in s.reasons else 0.0
-            if R_PREHEAT in s.reasons or R_PREHEAT_EXTREME in s.reasons:
-                debt -= target - s.scheduled
+    used: dict[int, float] = {}  # rule pre-heat already counted against a cut
+    for c, s in enumerate(slots):
+        if R_AWAY in s.reasons or not (R_EXPENSIVE in s.reasons or R_EXTREME_OFF in s.reasons):
+            continue
+        target = 0.0 if s.target is None else s.target
+        debt = s.scheduled - target
         if debt <= 0.5:
             continue
-        free = sorted(
-            (s for s in day_slots
-             if s.target is not None and s.price is not None and R_AWAY not in s.reasons
-             and R_EXPENSIVE not in s.reasons and s.level not in (LEVEL_EXPENSIVE, LEVEL_EXTREME)),
-            key=lambda s: s.price,  # type: ignore[arg-type, return-value]
-        )
-        for s in free:
+        window = [j for j in range(max(0, c - PERCENT_WINDOW), c)
+                  if slots[j].target is not None and R_AWAY not in slots[j].reasons
+                  and R_EXPENSIVE not in slots[j].reasons and R_EXTREME_OFF not in slots[j].reasons]
+        for j in window:  # the rules' pre-heat for this cut
+            p = slots[j]
+            extra = max(0.0, p.target - p.scheduled) - used.get(j, 0.0)  # type: ignore[operator]
+            take = min(extra, debt)
+            if take > 0:
+                used[j] = used.get(j, 0.0) + take
+                debt -= take
+        for j in sorted(window, key=lambda j: (slots[j].price is None, slots[j].price or 0.0, -j)):
             if debt <= 0.5:
                 break
-            room = min(zone.max_value - s.target, zone.price_shift - max(0.0, s.target - s.scheduled))  # type: ignore[operator]
+            p = slots[j]
+            room = min(zone.max_value - p.target, zone.price_shift - max(0.0, p.target - p.scheduled))  # type: ignore[operator]
             add = round(min(room, debt))
             if add <= 0:
                 continue
-            s.target += add  # type: ignore[operator]
+            p.target += add  # type: ignore[operator]
+            used[j] = used.get(j, 0.0) + add
             debt -= add
-            if R_PREHEAT not in s.reasons:
-                s.reasons.append(R_PREHEAT)
-            s.mode = "preheat"
+            if R_PREHEAT not in p.reasons:
+                p.reasons.append(R_PREHEAT)
+            p.mode = "preheat"
+        if debt > 0.5:
+            # not enough room before it: take only what was put back
+            s.target = _clamp(round(target + debt), zone.min_value, zone.max_value)
+            if R_EXTREME_OFF in s.reasons:
+                s.reasons = [r for r in s.reasons if r != R_EXTREME_OFF] + [R_EXPENSIVE]
+            if s.target >= s.scheduled - 0.5:
+                s.target = s.scheduled
+                s.reasons = [r for r in s.reasons if r != R_EXPENSIVE]
+                s.mode = _plain_mode(zone, s)
+            else:
+                s.mode = "save"
+
+
+COAST_DROP = 0.5  # °C a coasting capacity hour's setpoint goes under the plan's target
+COAST_MARGIN = 0.15  # °C the room must be planned above its target to count as coasting
+
+
+def _coast(zone: ZoneConfig, slots: list[PlanHour], kw_cap: dict[datetime, float], room_temp: float) -> bool:
+    """Capacity hours the plan coasts through on stored heat: set the thermostat lower.
+
+    A floor thermostat does not see the plan: it switches on when *its* reading drops
+    0.3 °C under the setpoint, and a floor sensor reads low once the stored heat is
+    used up (it anticipates the cooling), so a room planned to idle at 21.4 °C with
+    the setpoint at 21 still drew 2 kW in the cooking hour in the benchmark and set
+    the day's peak. Where an hour has a kW budget, the plan draws (almost) nothing and
+    the room is planned to stay ``COAST_MARGIN`` above the target, the setpoint goes
+    ``COAST_DROP`` lower (never below the schedule minus ``energy.PEAK_SLACK`` nor the
+    safety floor): the room's comfort is the plan's stored heat, the thermostat only
+    stands by.
+    """
+    changed = False
+    prev = room_temp
+    for s in slots:
+        start_t, prev = prev, s.predicted if s.predicted is not None else prev
+        if s.start not in kw_cap or s.target is None or s.duty > 0.05 or s.predicted is None:
+            continue
+        if min(start_t, s.predicted) < s.target + COAST_MARGIN:
+            continue
+        floor = max(zone.min_value, zone.safety_min_temp, comfort_reference(zone, s) - 0.5)
+        new = max(round((s.target - COAST_DROP) * 2) / 2, math_ceil_half(floor))
+        if new < s.target - 1e-9:
+            s.target = new
+            s.mode = "save"
+            if R_PEAK not in s.reasons:
+                s.reasons.append(R_PEAK)
+            changed = True
+    return changed
+
+
+def math_ceil_half(v: float) -> float:
+    """Smallest 0.5 °C step at or above ``v``."""
+    return ceil(v * 2 - 1e-9) / 2
 
 
 def _apply_warmup(zone: ZoneConfig, slots: list[PlanHour], warm: dict[int, float]) -> None:
