@@ -181,7 +181,7 @@ def test_flat_price_budget_run_changes_only_the_hours_around_the_budget():
     capped = build_plan(z, FLAT, {}, prices, PriceRules(), start, 36, room_temp=21.0, outdoor_default=5.0,
                         method="optimize", kw_cap={cooking: 0.0})
     window = [h.start for h in capped.hours if cooking - timedelta(hours=4) <= h.start <= cooking]
-    for a, b in zip(free.hours, capped.hours):
+    for a, b in zip(free.hours, capped.hours, strict=True):
         if b.start not in window:
             assert b.target == a.target, b
     # heat stored before the budget hour, which coasts (the room never below its schedule)
@@ -236,7 +236,7 @@ def test_plan_peaks_never_returns_a_higher_overshoot():
                    thermal=ThermalModel(gross_rate=1.3, tau_hours=40.0, learned=True))
     start = DAY + timedelta(hours=10)
     prices = {DAY + timedelta(hours=i): 0.5 for i in range(48)}
-    base = {h: 1.0 for h in range(24)}
+    base = dict.fromkeys(range(24), 1.0)
 
     def plan(kw_cap=None):
         return build_plan(z, FLAT, {}, prices, PriceRules(), start, 24, room_temp=23.0, outdoor_default=-10.0,
