@@ -110,16 +110,18 @@ What changed (all in the integration, mirrored by `tools.sim`):
 
 Honest notes:
 
-* **Writes:** 19–37 per day for the whole house (4 zones: 5–9 per zone; round 1: 10–30), EMHASS
+* **Writes:** 10–37 per day for the whole house (4 zones: 3–9 per zone; round 1: 10–30), EMHASS
   46–92. Capacity budgets add writes where they act (Oct/Apr spot ≈ 34 vs 26).
 * **January with strømstøtte got worse than round 1** (1731 → 1747, still +7 over RoomMind):
   round 1's bathroom shifting gave the heat back in the day's cheapest (night) hours, which
   happened to warm the bathroom in that cell – the same mechanism cost January spot 46 °C·h. The
   new shifting is comfort-neutral; the bathroom (no sensor) now ends where the schedule leaves
   it in every strategy.
-* `heat_planner_opt` (optimiser *without* capacity limiting) also changed: in April spot it lost
-  a capacity step on one tuning seed it had kept before (no budgets keep pre-heating in check).
-  The capacity limiting needs the house meter; without one this round changes little.
+* The other two variants changed too. `heat_planner_opt` (no capacity limiting) is better in
+  October and January but worse in April spot (724 → 743: without budgets the freer pre-heating
+  costs a capacity step on one seed); `heat_planner_rules` lost 22 kr in January with
+  strømstøtte (mostly the bathroom, as above). Capacity limiting needs the house meter; without one,
+  this round's gains are the January ones.
 * Run time: about 40 CPU s per 14-day run with capacity budgets (≈ 0.12 s per hourly re-plan of
   4 zones incl. up to 3 budget rounds), twice round 1.
 * Not done: a terminal value for heat stored at the end of the horizon (the 36 h horizon and
