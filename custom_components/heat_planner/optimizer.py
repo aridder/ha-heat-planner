@@ -37,6 +37,7 @@ from .planner import (
     R_EXTREME_OFF,
     R_PREHEAT,
     R_PREHEAT_EXTREME,
+    R_PEAK,
     R_PROTECTED,
     R_WARMUP,
     PlanHour,
@@ -55,6 +56,7 @@ _INF = float("inf")
 _SETPOINT_STEPS = (0.5, 1.0, 2.0, 3.0, 4.0)
 _PERCENT_STEPS = (10.0, 20.0, 30.0, 40.0, 60.0)
 _MAX_BINS = 80
+PEAK_PREP_HOURS = 4  # peak_only: hours before a budget hour in which heat may be stored
 
 
 @dataclass
@@ -69,7 +71,17 @@ class OptimizerWeights:
     comfort: float = 1.0  # per (°C below reference)² · h, normal hours
     comfort_high: float = 3.0  # multiplier in comfort/protected hours
     comfort_low: float = 0.3  # multiplier when away or at night
-    above: float = 0.1  # per °C · h above the reference (linear, small)
+    # plus, per °C · h more than ``band`` below the reference, a linear term: the
+    # quadratic penalty alone made dips of 0.3–0.5 °C look nearly free (a capacity
+    # budget was then met by letting a room sag instead of storing heat before)
+    linear: float = 1.0
+    band: float = 0.2  # °C
+    # per °C · h above the reference: 0 – the extra losses of a warmer room are already
+    # paid in the model; a penalty on top (0.1 before) kept pre-heating out of the cheap
+    # hours of a cold spell (benchmark, January spot: 13–17 kr per 14 days)
+    above: float = 0.0
+    # °C above the reference aimed for in hours with a capacity budget (``kw_cap``)
+    cap_margin: float = 0.3
     peak: float | None = None  # per kW above the cap; None = 10 × average price
     terminal: float = 1.0  # reheat units per °C the horizon ends below reference
     min_gain: float = 0.02  # reheat units an hour must gain before leaving the schedule
@@ -109,6 +121,7 @@ def optimize_zone(
     *,
     initial_off_run: int = 0,
     warmup: dict[int, float] | None = None,
+    peak_only: bool = False,
 ) -> list[PlanHour]:
     """Return new slots with optimised targets (simulation fields are not filled).
 
@@ -121,6 +134,10 @@ def optimize_zone(
     follows that warm-up (the room is meant to *be* at the new target when the step
     begins) and the warm-up target is one of the actions of those hours; the
     optimiser may still warm up earlier, in cheaper hours.
+
+    ``peak_only``: the prices carry nothing worth shifting (Norgespris) and the run is
+    for the capacity budget ``kw_cap`` alone; changed hours are labelled ``peak_limit``
+    instead of as price decisions.
 
     Falls back to ``slots`` unchanged when the room temperature is unknown,
     there are no prices, or ``price_aggressiveness`` is 0.
@@ -157,6 +174,19 @@ def optimize_zone(
     n = len(slots)
     prot = [is_protected(zone, s.start) for s in slots]
 
+    # Capacity budget only (nothing worth shifting for price): the plan may only change
+    # in the hours that store heat for a budget hour (up to PEAK_PREP_HOURS plus the dead
+    # time before it) and in the budget hour itself. Free everywhere, a flat-price run
+    # re-shaped the whole day – stopping early in the evening (0.5 °C under the schedule)
+    # and pre-heating at night for the next day's cooking peak.
+    free: set[int] | None = None
+    if peak_only:
+        free = set()
+        capped = [i for i, s in enumerate(slots) if s.start in kw_cap]
+        for c in capped:
+            free.update(range(max(0, c - PEAK_PREP_HOURS - lag_h), c + 1))
+
+    cap_hold: set[int] = set()
     hours: list[_Hour] = []
     for i, s in enumerate(slots):
         t_out = outdoor.get(s.start, outdoor_default)
@@ -167,7 +197,16 @@ def optimize_zone(
         no_lower = protected or prot[min(n - 1, i + lag_h)]
         away = R_AWAY in s.reasons
         ref = comfort_reference(zone, s)
+        night = (
+            s.start.hour >= w.night_from or s.start.hour < w.night_to
+            if w.night_from > w.night_to
+            else w.night_from <= s.start.hour < w.night_to
+        )
+        if s.start in kw_cap and not percent and not away and not night:
+            cap_hold.add(i)
         acts = _actions(zone, ref, shift_max, raise_max, no_lower, floor)
+        if free is not None and i not in free:
+            acts = [round(ref) if percent else round(ref * 2) / 2]
         goal = (warmup or {}).get(i)
         if goal is not None and not percent:
             # comfort first: a warm-up hour holds at least the coming target (if the room
@@ -182,18 +221,13 @@ def optimize_zone(
             and (floor is None or ref >= floor)
         ):
             acts.append(None)
-        night = (
-            s.start.hour >= w.night_from or s.start.hour < w.night_to
-            if w.night_from > w.night_to
-            else w.night_from <= s.start.hour < w.night_to
-        )
         if protected or (not percent and ref > zone.comfort + 0.01 and not away):
             mult = w.comfort_high
         elif away or night:
             mult = w.comfort_low
         else:
             mult = 1.0
-        price = s.price if s.price is not None else prices.get(s.start)
+        price = prices.get(s.start, s.price)
         hours.append(
             _Hour(
                 out=t_out, a=a, b0=b0, bd=bd, affine=affine, sol=sol,
@@ -221,8 +255,20 @@ def optimize_zone(
     last = len(ref_flat) - 1
     for i, h in enumerate(hours):
         idx = [min(last, i * SUBSTEPS + j + n_lag) for j in range(SUBSTEPS)]
-        h.ref_temps = tuple(ref_flat[g] for g in idx)
+        # an hour with a capacity budget is coasted through on stored heat: aim that much
+        # above the reference, so a model that is a little off (a room that cools faster
+        # than believed) does not wake the thermostat in the peak hour
+        lift = w.cap_margin if h.cap is not None else 0.0
+        h.ref_temps = tuple(ref_flat[g] + lift for g in idx)
         h.w_sub = tuple(w_flat[g] for g in idx)
+        if i in cap_hold and ref_flat[min(last, (i + 1) * SUBSTEPS - 1)] >= h.ref - 0.3:
+            # a capacity budget is met with heat stored before the hour, never by setting an
+            # occupied room that the schedule holds below it (a thermostat 0.5 °C lower lets
+            # the room sag 0.8 °C before it restarts – the benchmark's kitchen while cooking).
+            # Only where the schedule itself is still climbing to a new step may a lower
+            # setpoint spread that climb.
+            keep = [a for a in h.actions if a is not None and a >= h.ref - 0.25]
+            h.actions = keep or [round(h.ref * 2) / 2]
 
     # Temperature grid.
     all_refs = ref_flat
@@ -310,7 +356,7 @@ def optimize_zone(
                 best, best_act, best_t = cost, act, t_end
         run = run + 1 if best_act is None else 0
         temp = best_t
-        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4], warm.get(i)))
+        out.append(_label(zone, s, h, best_act, slots[i + 1 : i + 4], warm.get(i), peak_only))
     return out
 
 
@@ -413,6 +459,8 @@ def _hour_cost(
     floor = zone.safety_min_temp
     a, b0, bd, affine = h.a, h.b0, h.bd, h.affine
     refs, wsub = h.ref_temps, h.w_sub
+    lin = w.linear  # (w_sub already carries the comfort weight)
+    band = w.band
     if affine and not percent and act is not None and bd > 0:
         # fast path (the common case): thermostat on an affine room model
         lim = floor - 1e-6
@@ -430,7 +478,7 @@ def _hour_cost(
                 return None
             diff = refs[j] - temp
             if diff > 0:
-                deficit += wsub[j] * diff * diff
+                deficit += wsub[j] * (diff * diff + (lin * (diff - band) if diff > band else 0.0))
             else:
                 above -= diff
         return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
@@ -457,7 +505,7 @@ def _hour_cost(
         duty_sum += d
         diff = refs[j] - temp
         if diff > 0:
-            deficit += wsub[j] * diff * diff
+            deficit += wsub[j] * (diff * diff + (lin * (diff - band) if diff > band else 0.0))
         else:
             above -= diff
     return _finish(zone, h, w, unit, peak_w, duty_sum, deficit, above, temp)
@@ -478,11 +526,18 @@ def _finish(
 def _label(
     zone: ZoneConfig, s: PlanHour, h: _Hour, act: float | None, ahead: list[PlanHour],
     warm: float | None = None,
+    peak_only: bool = False,
 ) -> PlanHour:
     """Copy of ``s`` with the chosen target and consistent mode/reasons."""
     base_reasons = [r for r in s.reasons if r in ("schedule", "override", R_AWAY)]
     reasons = list(base_reasons)
     costly = s.level in (LEVEL_EXPENSIVE, LEVEL_EXTREME)
+    if peak_only and (act is None or abs(act - h.ref) > 1e-9) and not (
+        warm is not None and act is not None and h.ref < act <= warm + 1e-9
+    ):
+        mode = "off" if act is None else "save" if act < h.ref else "preheat"
+        return replace(s, target=act, mode=mode, reasons=[*reasons, R_PEAK], predicted=None,
+                       duty=0.0, kwh=0.0, cost=None)
     if act is None:
         reasons += [R_EXTREME_OFF if s.level == LEVEL_EXTREME else R_EXPENSIVE, R_OPTIMIZED]
         mode = "off"

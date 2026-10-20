@@ -5,13 +5,21 @@
 * The benchmark itself runs and is reproducible.
 """
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
+import pytest
+
+from custom_components.heat_planner.control import HourMeter, day_peaks, live_shed, plan_peaks
+from custom_components.heat_planner.optimizer import R_OPTIMIZED
+from custom_components.heat_planner.peak import PeakConfig, choose_limit
 from custom_components.heat_planner.planner import (
     MODE_PERCENT,
     R_EXPENSIVE,
+    R_PEAK,
     PriceRules,
+    ThermalModel,
     ZoneConfig,
     build_plan,
     default_schedule,
@@ -52,3 +60,220 @@ def test_benchmark_smoke():
     # deterministic
     again = run(Fixed(), case)
     assert again["bills"] == out["fixed_schedule"]["bills"]
+
+
+# --------------------------------------------------------------------------- round 2
+
+BATH = ZoneConfig(zone_id="bad", name="Bad", mode=MODE_PERCENT, comfort=0.0, min_value=0.0, max_value=100.0,
+                  away_offset=-20.0, price_shift=15.0, preheat=10.0)
+
+
+def _evening_peak(day=DAY, days=2, peak=3.0):
+    return {day + timedelta(hours=i): (peak if i % 24 in (17, 18, 19) else 1.0) for i in range(24 * days)}
+
+
+def test_percent_zone_preheats_just_before_a_cut_and_keeps_it_across_replans():
+    sched = {wd: [40.0] * 24 for wd in range(7)}
+    prices = _evening_peak(peak=3.5)  # 17–19 extreme (≥ 3.0)
+    early = build_plan(BATH, sched, {}, prices, PriceRules(), DAY + timedelta(hours=12), 24)
+    by = {h.start.hour: h for h in early.hours if h.start.date() == DAY.date()}
+    taken = sum(h.scheduled - (h.target or 0.0) for h in by.values() if h.target is None or h.target < h.scheduled)
+    added = sum(h.target - h.scheduled for h in by.values() if h.target is not None and h.target > h.scheduled)
+    assert taken > 0 and added == pytest.approx(taken, abs=1.0)
+    # all of it in the three hours before the cuts (before: the day's cheapest hours, often after
+    # the cut – and forgotten once the cut hours had left the plan)
+    assert all(by[h].target == 40.0 for h in (12, 13, 20, 21, 22, 23))
+    assert all(by[h].target > 40.0 for h in (14, 15, 16))
+    # a re-plan in the middle of the cut keeps the same hours (deterministic over the window)
+    later = build_plan(BATH, sched, {}, prices, PriceRules(), DAY + timedelta(hours=18), 6)
+    assert [h.target for h in later.hours] == [by[h].target for h in range(18, 24)]
+    # what cannot be put back before is not taken: with less room before the peak (no
+    # pre-heat allowed above the schedule) the OFF hour becomes a smaller cut
+    tight = replace(BATH, price_shift=10.0, preheat=0.0)
+    p = build_plan(tight, sched, {}, prices, PriceRules(), DAY + timedelta(hours=12), 24)
+    first = {h.start.hour: h for h in p.hours if h.start.date() == DAY.date()}
+    assert first[17].target is not None and first[17].target > 0
+    lowered = sum(h.scheduled - h.target for h in first.values() if h.target < h.scheduled)
+    raised = sum(h.target - h.scheduled for h in first.values() if h.target > h.scheduled)
+    assert lowered == pytest.approx(raised, abs=1.0)
+
+
+def test_choose_limit_aims_for_the_lower_step_only_while_reachable():
+    cfg = PeakConfig()
+    today = DAY.date()
+    # last month 5.6 kW (10 kW step) but this house can stay under 4 kW: aim for 4.7
+    assert choose_limit(cfg, [], 0.0, today=today, days_left=13, reference_kw=5.6, floor_kw=4.0) == pytest.approx(4.7)
+    # a cold spell: the unavoidable peak is above the lower step → defend the current one
+    assert choose_limit(cfg, [], 0.0, today=today, days_left=13, reference_kw=5.6, floor_kw=5.1) == pytest.approx(9.7)
+    # one bad day does not end the attempt …
+    bad = [(today - timedelta(days=1), 5.8)]
+    assert choose_limit(cfg, bad, 0.0, today=today, days_left=13, reference_kw=5.6, floor_kw=4.0) == pytest.approx(4.7)
+    # … three do
+    three = [(today - timedelta(days=k), 5.8) for k in (1, 2, 3)]
+    assert choose_limit(cfg, three, 0.0, today=today, days_left=13, reference_kw=5.6, floor_kw=4.0) == pytest.approx(9.7)
+    # without a floor estimate: the old behaviour (hold the current step)
+    assert choose_limit(cfg, [], 0.0, today=today, days_left=13, reference_kw=5.6) == pytest.approx(9.7)
+
+
+def test_plan_peaks_stores_heat_before_the_peak_instead_of_setting_back():
+    slow = ZoneConfig(zone_id="stue", name="Stue", heater_kw=2.0, warmup=True,
+                      thermal=ThermalModel(gross_rate=1.3, tau_hours=40.0, learned=True, lag_hours=1.0),
+                      protected_from_hour=0, protected_to_hour=0)
+    flat = {wd: [0.0] * 24 for wd in range(7)}
+    start = DAY + timedelta(hours=10)
+    prices = {DAY + timedelta(hours=i): 1.0 + 0.001 * i for i in range(48)}
+
+    def plan(kw_cap=None):
+        return build_plan(slow, flat, {}, prices, PriceRules(), start, 24, room_temp=21.0, outdoor_default=-2.0,
+                          method="optimize", kw_cap=kw_cap)
+
+    before = plan()
+    caps = {h.start: 3.0 for h in before.hours}
+    base = {h: (2.8 if h in (17, 18) else 0.5) for h in range(24)}  # cooking: 0.2 kW left for heating
+    out = plan_peaks({"stue": slow}, {"stue": before}, caps, base, {}, lambda z, cap: plan(cap))["stue"]
+
+    def kwh(p, hours):
+        return sum(h.kwh for h in p.hours if h.start.hour in hours)
+
+    assert kwh(out, (17, 18)) < kwh(before, (17, 18)) - 0.3
+    assert kwh(out, (13, 14, 15, 16)) > kwh(before, (13, 14, 15, 16))
+    # comfort first: the room coasts on stored heat, it is not held below its schedule
+    assert all(h.predicted >= h.scheduled - 0.1 for h in out.hours)
+
+
+def test_capacity_budget_under_norgespris_is_not_price_shifting():
+    z = ZoneConfig(zone_id="stue", name="Stue", heater_kw=2.0,
+                   thermal=ThermalModel(gross_rate=1.3, tau_hours=40.0, learned=True))
+    flat = {wd: [0.0] * 24 for wd in range(7)}
+    start = DAY + timedelta(hours=10)
+    prices = {DAY + timedelta(hours=i): 0.5 + (0.1 if 6 <= i % 24 < 22 else 0.0) for i in range(48)}
+    cap = {start + timedelta(hours=k): 0.1 for k in (7, 8)}
+    p = build_plan(z, flat, {}, prices, PriceRules(), start, 24, room_temp=21.0, outdoor_default=-2.0,
+                   method="optimize", kw_cap=cap)
+    reasons = {r for h in p.hours for r in h.reasons}
+    assert R_OPTIMIZED not in reasons and R_PEAK in reasons
+
+
+def test_live_guard_does_not_set_back_a_percent_zone():
+    plan = build_plan(BATH, default_schedule(MODE_PERCENT), {}, {}, PriceRules(), DAY + timedelta(hours=18), 2)
+    now = DAY + timedelta(hours=18, minutes=20)
+    assert live_shed(9.0, 5.0, {"bad": plan}, {"bad": BATH}, {}, {}, now) == {}
+
+
+def _stue(**kw):
+    return ZoneConfig(zone_id="stue", name="Stue", heater_kw=2.0,
+                      thermal=ThermalModel(gross_rate=1.3, tau_hours=40.0, learned=True),
+                      protected_from_hour=0, protected_to_hour=0, **kw)
+
+
+FLAT = {wd: [0.0] * 24 for wd in range(7)}
+
+
+def test_flat_price_budget_run_changes_only_the_hours_around_the_budget():
+    """Norgespris + a budget at tomorrow's cooking hour: before, the run re-shaped the whole
+    day (stopping 0.5 °C early in the evening, pre-heating at night for the next day)."""
+    z = _stue()
+    start = DAY + timedelta(hours=18)
+    prices = {DAY + timedelta(hours=i): 0.5 + (0.1 if 6 <= i % 24 < 22 else 0.0) for i in range(60)}
+    free = build_plan(z, FLAT, {}, prices, PriceRules(), start, 36, room_temp=21.0, outdoor_default=5.0,
+                      method="optimize")
+    cooking = DAY + timedelta(days=1, hours=17)
+    capped = build_plan(z, FLAT, {}, prices, PriceRules(), start, 36, room_temp=21.0, outdoor_default=5.0,
+                        method="optimize", kw_cap={cooking: 0.0})
+    window = [h.start for h in capped.hours if cooking - timedelta(hours=4) <= h.start <= cooking]
+    for a, b in zip(free.hours, capped.hours, strict=True):
+        if b.start not in window:
+            assert b.target == a.target, b
+    # heat stored before the budget hour, which coasts (the room never below its schedule)
+    assert sum(h.kwh for h in capped.hours if h.start in window[:-1]) > \
+        sum(h.kwh for h in free.hours if h.start in window[:-1])
+    assert next(h for h in capped.hours if h.start == cooking).kwh < 0.2
+    assert all(h.predicted >= h.scheduled - 0.05 for h in capped.hours)
+
+
+def test_occupied_budget_hour_is_never_set_below_the_schedule():
+    """The kitchen while cooking: a budget it cannot meet from stored heat is exceeded, not
+    met with a setpoint 0.5 °C lower (the thermostat then lets the room sag 0.8 °C)."""
+    z = _stue(preheat=0.0)  # nothing can be stored beforehand
+    start = DAY + timedelta(hours=14)
+    prices = {DAY + timedelta(hours=i): 1.0 + 0.3 * (i % 24 == 17) for i in range(48)}
+    budget = {DAY + timedelta(hours=17): 0.1}
+    p = build_plan(z, FLAT, {}, prices, PriceRules(), start, 24, room_temp=21.0, outdoor_default=0.0,
+                   method="optimize", kw_cap=budget)
+    h17 = next(h for h in p.hours if h.start.hour == 17)
+    assert h17.target is not None and h17.target >= h17.scheduled
+
+
+def test_live_guard_hysteresis_near_too_cold():
+    """A room just above the 'too cold' line was set back, released a minute later and set
+    back again (36 writes in an evening). Near the line it is not set back at all."""
+    z = _stue()
+    now = DAY + timedelta(hours=18, minutes=20)
+    plan = build_plan(z, FLAT, {}, {}, PriceRules(), now, 2, room_temp=20.0)
+    zones, plans = {"stue": z}, {"stue": plan}
+    shed = live_shed(9.0, 8.5, plans, zones, {}, {}, now)
+    assert "stue" in shed
+    assert live_shed(9.0, 8.5, plans, zones, {}, {}, now, fragile={"stue"}) == {}
+    # already set back: it stays so (released only when 'holding')
+    assert live_shed(9.0, 8.5, plans, zones, {}, shed, now, fragile={"stue"}) == shed
+
+
+def test_meter_projection_ignores_the_previous_hours_average_early_in_the_hour():
+    m = HourMeter()
+    t = DAY + timedelta(hours=18, minutes=50)
+    for k in range(11):  # cooking until 19:00
+        m.add(4.5, t + timedelta(minutes=k))
+    t19 = DAY + timedelta(hours=19, minutes=2)
+    m.add(1.5, t19)
+    assert m.projected(t19, smooth=True) == pytest.approx(m.projected(t19), abs=0.2)
+    assert m.projected(t19, smooth=True) < 2.0
+
+
+def test_plan_peaks_never_returns_a_higher_overshoot():
+    """Budgets that only push heat into other hours are dropped – plan_peaks returns the
+    candidate (no budgets / all / the useful ones) with the least overshoot of the caps."""
+    z = ZoneConfig(zone_id="stue", name="Stue", heater_kw=6.0, comfort=23.0,
+                   thermal=ThermalModel(gross_rate=1.3, tau_hours=40.0, learned=True))
+    start = DAY + timedelta(hours=10)
+    prices = {DAY + timedelta(hours=i): 0.5 for i in range(48)}
+    base = dict.fromkeys(range(24), 1.0)
+
+    def plan(kw_cap=None):
+        return build_plan(z, FLAT, {}, prices, PriceRules(), start, 24, room_temp=23.0, outdoor_default=-10.0,
+                          method="optimize", kw_cap=kw_cap)
+
+    before = {"stue": plan()}
+    caps = {h.start: 2.0 for h in before["stue"].hours}
+    out = plan_peaks({"stue": z}, dict(before), caps, base, {}, lambda zid, cap: plan(cap))
+
+    def over(plans):
+        return sum(max(0.0, v) for v in day_peaks(plans, caps, base).values())
+
+    assert over(out) <= over(before) + 1e-9
+
+
+def test_warmup_holds_the_new_target_through_the_dead_time():
+    """−15 °C weekend morning: at 05:00 the floor still held 21 °C on heat already in transit,
+    so the 07:00 step counted as reached and no warm-up was planned – the living room then
+    sagged to 19.9 °C at 08:00 with the heater on since 07:00 (2 h dead time)."""
+    z = ZoneConfig(zone_id="stue", name="Stue", heater_kw=2.0, warmup=True,
+                   thermal=ThermalModel(gross_rate=1.25, tau_hours=44.0, learned=True, lag_hours=2.0))
+    sched = {wd: [-2.0] * 7 + [0.0] * 16 + [-2.0] for wd in range(7)}
+    start = DAY + timedelta(hours=5)
+    p = build_plan(z, sched, {}, {}, PriceRules(), start, 12, room_temp=21.0, outdoor_default=-18.0)
+    by = {h.start.hour: h for h in p.hours}
+    assert by[5].warmup == 21.0 or by[6].warmup == 21.0
+    assert min(by[h].predicted for h in (7, 8, 9)) >= 21.0 - 0.15
+
+
+def test_flat_rest_of_horizon_keeps_the_schedule():
+    """The rules classify whole days: after a dear morning the evening was still 'expensive'
+    and lowered 1 °C with no comfort check although the rest of the horizon was flat
+    (strømstøtte, cold spell: the kitchen 1 °C under its schedule for three cooking hours)."""
+    z = _stue()
+    start = DAY + timedelta(hours=12)
+    prices = {DAY + timedelta(hours=i): (2.0 if 6 <= i < 8 else 1.0 + 0.02 * (i % 24 in (17, 18, 19)))
+              for i in range(24)}
+    p = build_plan(z, FLAT, {}, prices, PriceRules(), start, 12, room_temp=21.0, outdoor_default=-10.0,
+                   method="optimize")
+    assert all(h.target == h.scheduled for h in p.hours), [(h.start.hour, h.target, h.reasons) for h in p.hours]

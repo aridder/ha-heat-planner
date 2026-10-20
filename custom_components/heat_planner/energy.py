@@ -16,14 +16,13 @@ from typing import Any
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
 
-from .peak import PeakConfig, caps_for_plan, limit_plans, monthly_peaks, top3_average
-from .planner import Plan, PlanHour, ZoneConfig, comfort_reference, hour_key, is_protected
+from .peak import PeakConfig, caps_for_plan, choose_limit, limit_plans, monthly_peaks, top3_average
+from .planner import R_PEAK, Plan, PlanHour, ZoneConfig, comfort_reference, hour_key, is_protected
 from .tariff import TariffConfig
 
 _LOGGER = logging.getLogger(__name__)
 
 CONF_ENERGY = "energy"
-R_PEAK = "peak_limit"
 # Capacity limiting never takes a room more than this below its own schedule
 # (or away floor): in the simulation an unbounded limiter kept the living room
 # 2 °C under its schedule all evening (+13 °C·h a day) to save one tariff step.
@@ -184,6 +183,57 @@ def base_load(
     return out
 
 
+HEAT_LOG_DAYS = 15
+
+
+REST_QUANTILE = 0.9
+
+
+def rest_of_house(
+    hourly: dict[datetime, float],
+    heat_log: dict[datetime, float],
+    heating_default: float,
+    now: datetime | None = None,
+    *,
+    q: float = REST_QUANTILE,
+) -> dict[int, float]:
+    """The rest of the house per hour of day: the meter minus *our own* heating that hour.
+
+    ``heat_log`` is the heating Heat Planner planned for each past hour (see
+    :func:`log_heating`); hours without an entry fall back to ``heating_default``
+    (the plans' average). Subtracting one average from every hour, as before, made
+    the estimate wrong exactly where it matters: once the cooking hours were kept
+    free of heating the meter there was low, so the "rest of the house" looked a
+    kilowatt smaller than it is and the next plans heated into those hours again.
+
+    The ``q`` quantile of the last 14 days (default 0.9: the month's top-3 hours are
+    its *worst* days, so a typical day is not the right budget for them).
+    """
+    cutoff = (now or dt_util.now()) - timedelta(days=14)
+    by_hour: dict[int, list[float]] = {}
+    for when, kwh in hourly.items():
+        if when >= cutoff:
+            by_hour.setdefault(when.hour, []).append(max(0.0, kwh - heat_log.get(when, heating_default)))
+    out: dict[int, float] = {}
+    for hour, vals in by_hour.items():
+        vals.sort()
+        pos = q * (len(vals) - 1)
+        lo = int(pos)
+        hi = min(lo + 1, len(vals) - 1)
+        out[hour] = vals[lo] + (vals[hi] - vals[lo]) * (pos - lo)
+    return out
+
+
+def log_heating(log: dict[datetime, float], plans: dict[str, Plan], now: datetime) -> None:
+    """Record the heating planned for the current hour (for :func:`rest_of_house`)."""
+    hour = hour_key(now)
+    total = sum(p.hours[0].kwh for p in plans.values() if p.hours and p.hours[0].start == hour)
+    log[hour] = round(total, 3)
+    old = hour - timedelta(days=HEAT_LOG_DAYS)
+    for k in [k for k in log if k < old]:
+        del log[k]
+
+
 # --------------------------------------------------------------------------- planning
 
 
@@ -215,10 +265,43 @@ def _step_label(lo: float, hi: float) -> str:
     return f"{f(lo)}–{f(hi)} kW"
 
 
+PEAK_WINDOW_H = 2.0  # how long the house's busiest stretch lasts (cooking)
+PEAK_STORE_C = 1.0  # °C a room may be pre-heated above its schedule to coast through it
+
+
+def peak_storage(zones: list[ZoneConfig]) -> float:
+    """kWh the rooms can store by pre-heating ``PEAK_STORE_C`` (setpoint zones with a model)."""
+    total = 0.0
+    for z in zones:
+        gross = getattr(z.thermal, "gross_rate", 0.0) or 0.0
+        if not z.is_percent and gross > 0:
+            total += z.heater_kw / gross * PEAK_STORE_C
+    return total
+
+
+def peak_floor(base: dict[int, float], heating_kw: float, storage_kwh: float) -> float:
+    """The lowest daily peak the house can plausibly reach (kW), for :func:`peak.choose_limit`.
+
+    The rest of the house in its busiest hour of the day plus the heating that heat
+    stored beforehand cannot cover: over a ``PEAK_WINDOW_H`` busy stretch the rooms
+    need ``heating_kw`` (the plans' average), and pre-heating them ``PEAK_STORE_C``
+    stores ``storage_kwh`` (:func:`peak_storage`). In a cold spell what is left is
+    more than the lower step has room for, and that step is not attempted (the
+    benchmark: trying it at −5 °C cost comfort for no step).
+    """
+    residual = max(0.0, heating_kw - storage_kwh / PEAK_WINDOW_H)
+    return max(base.values(), default=0.0) + residual
+
+
 def plan_caps(
-    cfg: PeakConfig, hourly: dict[datetime, float], hours: list[datetime], now: datetime
+    cfg: PeakConfig, hourly: dict[datetime, float], hours: list[datetime], now: datetime,
+    *, floor_kw: float | None = None,
 ) -> tuple[dict[datetime, float], PeakState]:
-    """Caps for each plan hour plus a summary for the card."""
+    """Caps for each plan hour plus a summary for the card.
+
+    ``floor_kw`` (see :func:`peak_floor`): aim for a lower step when the month can
+    still reach it (:func:`peak.choose_limit`); without it the current step is held.
+    """
     this_month = {k: v for k, v in hourly.items() if (k.year, k.month) == (now.year, now.month)}
     prev = now.replace(day=1) - timedelta(days=1)
     last_month = {k: v for k, v in hourly.items() if (k.year, k.month) == (prev.year, prev.month)}
@@ -226,10 +309,15 @@ def plan_caps(
     today = now.date()
     today_so_far = max((v for k, v in this_month.items() if k.date() == today), default=0.0)
     ref = top3_average(monthly_peaks(last_month)) if last_month else None
-    caps = caps_for_plan(hours, peaks, today_so_far, now, cfg, reference_kw=ref)
+    limit = None
+    if floor_kw is not None:
+        nxt = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+        limit = choose_limit(cfg, peaks, today_so_far, today=today, days_left=(nxt.date() - today).days,
+                             reference_kw=ref, floor_kw=floor_kw)
+    caps = caps_for_plan(hours, peaks, today_so_far, now, cfg, reference_kw=ref, limit_kw=limit)
     top = sorted((v for d, v in peaks), reverse=True)[:3]
     avg = top3_average(peaks) if peaks else None
-    step = cfg.step_for(max(avg or 0.0, ref or 0.0))
+    step = cfg.step_for(limit) if limit is not None else cfg.step_for(max(avg or 0.0, ref or 0.0))
     state = PeakState(
         cap_kw=caps.get(hours[0]) if hours else None,
         top3_kw=[round(v, 2) for v in top],

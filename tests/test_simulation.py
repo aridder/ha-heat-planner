@@ -147,8 +147,10 @@ def test_live_guard_holds_until_the_real_end_of_the_hour() -> None:
     shed = live_shed(5.5, 5.0, {"stue": plan}, zones, {}, {}, now)
     # before: "02:00 + 1 h" in wall time was 03:00 CET, two real hours later
     assert shed["stue"].astimezone(UTC) == datetime(2026, 10, 25, 1, 0, tzinfo=UTC)
-    # an hour no set-back can save is let go (only comfort lost, and a reheat peak after)
-    assert live_shed(9.0, 5.0, {"stue": plan}, zones, {}, shed, now) == {}
+    # an hour no set-back can save is let go (only comfort lost, and a reheat peak after):
+    # nothing new is set back, a room already set back stays so until the hour ends
+    assert live_shed(9.0, 5.0, {"stue": plan}, zones, {}, {}, now) == {}
+    assert live_shed(9.0, 5.0, {"stue": plan}, zones, {}, shed, now) == shed
 
 
 # --------------------------------------------------------------------------- max off, restarts

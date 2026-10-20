@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0
+
+### Capacity tariff planned with the heating (benchmark round 2)
+- **Capacity budgets in the plan (optimiser + house meter):** each hour's heating budget is the cap minus a high estimate of the rest of the house (the meter minus Heat Planner's own logged heating). Rooms over budget are planned again with a kW limit, so floors store heat before the cooking peak and coast through it. Budgets are dropped again where they do not lower the day's peak, and can never raise it.
+- **Lower step when reachable:** the planner aims for the cheaper capacity step while the month can still reach it, and defends the current one otherwise.
+- **Comfort first:** an occupied room is never planned below its schedule for the capacity step; under Norgespris a budget only changes the few hours that store heat for it.
+- **Live guard:** ignores the previous hour's average in the first minutes of an hour, and does not set back a room that is close to "too cold" (no more flapping).
+- **Warm-up** now also holds the new target through a slow floor's dead time; a flat rest of the day keeps the schedule; pre-heating in cheap hours is no longer held back by an extra "too warm" penalty.
+- **Model:** a thermostat that reports "heating" nearly all the time (floor-sensor thermostats that pulse the floor) no longer teaches the model a weak heater.
+- Benchmark (`tools/bench/RESULTS.md`, round 2): best value score in all 9 season × contract cells, on the reported and on fresh seeds.
+
 ## 0.4.1
 
 - **Look back:** the card now has *Plan / Last 24 h / Last 48 h*. The past view shows:
@@ -10,12 +21,6 @@
 - **History log:** kept for 7 days and filled in from Home Assistant's own history the first time, so the last 48 hours show up immediately. Available over the websocket command `heat_planner/history`.
 - **Help:** new "Look back" section.
 
-## Unreleased
-
-### Look back
-- **History in the card:** "Plan / Last 24 h / Last 48 h" above the chart. Looking back shows what actually happened hour by hour: the target and mode that were applied (and why), the measured room temperature (solid) against the prediction (dashed), faded prices, markers for manual changes, capacity set-backs and off hours, and the home's hourly energy against the cap. A summary gives the average against target, hours below target, kWh with an estimated cost and the highest house hour. Percent rooms without a sensor show their heating demand (and on-time, when reported).
-- **Rolling log:** 7 days per room and hour, stored apart from the settings and kept across restarts; after a first start or a gap the last 48 hours are rebuilt from the recorder. Thermostats reporting 0 °C (no floor sensor) are ignored as room temperatures. Both 02:00 hours of the autumn DST change are kept.
-- **API:** websocket command `heat_planner/history` (`entry_id`, `hours` ≤ 168) – the regular export stays small.
 
 ## 0.4.0
 

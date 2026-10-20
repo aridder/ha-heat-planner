@@ -92,6 +92,40 @@ def wins(data: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
+def round2_lines(data: dict[str, Any]) -> list[str]:
+    """Round 2 table (``results.json["round2"]``): best Heat Planner vs the best competitor per
+    cell – round 1 (seeds 1–3), now (seeds 1–3) and on fresh seeds never used in development."""
+    r2 = data.get("round2")
+    if not r2:
+        return []
+    now = {(w["season"], w["contract"]): w for w in wins(data)}
+    fresh = {(w["season"], w["contract"]): w for w in r2.get("fresh_wins", [])}
+    before = {(w["season"], w["contract"]): w for w in r2.get("before_wins", [])}
+    seeds = ", ".join(str(s) for s in r2.get("fresh_seeds", []))
+    out = [
+        "### Round 2 per cell: best Heat Planner vs the best competitor (value score; °C·h > 0.3 °C)",
+        "",
+        f"| season | contract | round 1, seeds 1–3 | round 2, seeds 1–3 | best competitor | top-3 kW ours / theirs "
+        f"| writes/day | round 2, fresh seeds {seeds} |",
+        "|---|---|---:|---:|---|---:|---:|---:|",
+    ]
+    s = data["summary"]
+    for key, w in now.items():
+        b, f = before.get(key), fresh.get(key)
+        oc = s[w["ours"]][key[0]][key[1]]
+        cc = s[w["best_other"]][key[0]][key[1]]
+        r1 = "–" if not b else f"{b['ours_value']:.0f} vs {b['other_value']:.0f} ({b['margin']:+.0f})"
+        r2_now = (f"**{w['ours_value']:.0f}** ({w['ours_deficit']:.1f}) vs {w['other_value']:.0f} "
+                  f"({w['other_deficit']:.1f}): **{w['margin']:+.0f}**")
+        fr = "–" if not f else (f"{f['margin']:+.0f} ({f['ours_deficit']:.1f} vs {f['other_deficit']:.1f} °C·h, "
+                                f"{f['best_other']})")
+        out.append(
+            f"| {key[0]} | {SHORT[key[1]]} | {r1} | {r2_now} | {w['best_other']} "
+            f"| {oc['top3_kw']['mean']:.2f} / {cc['top3_kw']['mean']:.2f} | {oc['writes_day']['mean']:.0f} | {fr} |"
+        )
+    return out + [""]
+
+
 def write_markdown(data: dict[str, Any], path: Path) -> None:
     meta, s = data["meta"], data["summary"]
     lines = [
@@ -106,6 +140,7 @@ def write_markdown(data: dict[str, Any], path: Path) -> None:
     from .findings import FINDINGS
 
     lines += [FINDINGS.strip(), ""]
+    lines += round2_lines(data)
     lines += [
         "## Summary: value score per season and contract",
         "",
