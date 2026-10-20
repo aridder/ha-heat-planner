@@ -40,6 +40,7 @@ R_PROTECTED = "protected"
 R_SAFETY = "safety"
 R_WARMUP = "warmup"
 R_PEAK = "peak_limit"  # capacity tariff (the month's top-3 hours)
+_PRICE_REASONS = frozenset({R_EXPENSIVE, R_PREHEAT, R_PREHEAT_EXTREME, R_EXTREME_OFF, R_PROTECTED})
 
 WARMUP_MAX_HOURS = 6  # longest warm-up before a schedule step (plus the floor's dead time)
 WARMUP_TOLERANCE = 0.1  # °C: "reached" when the modelled room is this close to the new target
@@ -506,6 +507,19 @@ def build_plan(
         # as is – the optimiser would still trade comfort for energy.
         horizon = [prices[s.start] for s in slots if s.start in prices]
         flat = bool(horizon) and max(horizon) - min(horizon) < rules.min_spread
+        if flat and not kw_cap and not zone.is_percent:
+            # The rules classify each *day* (past hours included): a day whose dear
+            # morning is over still had its evening "expensive" and lowered 1 °C, with no
+            # comfort check (that runs in rules mode only) – the benchmark's kitchen sat
+            # 1 °C under its schedule for three cooking hours in a cold spell to save
+            # about 1 kr under strømstøtte. What is left of the horizon is flat: keep the
+            # schedule.
+            for s in slots:
+                if s.reasons and set(s.reasons) & _PRICE_REASONS:
+                    s.target = _clamp(comfort_reference(zone, s), zone.min_value, zone.max_value)
+                    s.target = round(s.target * 2) / 2
+                    s.reasons = [r for r in s.reasons if r not in _PRICE_REASONS]
+                    s.mode = _plain_mode(zone, s)
         try:
             if not flat or kw_cap:
                 opt_prices = prices
@@ -742,9 +756,24 @@ def warmup_targets(
     st: list = [None] * (len(work) + 1)
     states(0, room_temp, None, st)
     warm: dict[int, float] = {}
+    # A slow floor must also *hold* the new target until the heat commanded at the step
+    # arrives (its dead time): reaching it at the step on heat already in the floor and then
+    # sagging 1 °C for the next two hours was "reached" before (benchmark, −15 °C weekend
+    # mornings: the living room 19.9 °C at 08:00 with the heater on since 07:00).
+    hold = int(ceil(zone.thermal.lag_hours or 0.0))
+
+    def lowest(i: int, temp: float, queue: list[float] | None) -> float:
+        low = temp
+        for j in range(i, min(len(work), i + hold)):
+            if refs[j] < refs[i] - 0.01:
+                break
+            temp, queue = one(work[j], temp, queue)
+            low = min(low, temp)
+        return low
+
     for i in range(1, len(work)):
         goal = refs[i]
-        if goal <= refs[i - 1] + 0.01 or st[i][0] >= goal - WARMUP_TOLERANCE:
+        if goal <= refs[i - 1] + 0.01 or lowest(i, *st[i]) >= goal - WARMUP_TOLERANCE:
             continue
         chosen = 0
         for k in range(1, min(lead_max, i) + 1):
@@ -752,7 +781,7 @@ def warmup_targets(
             for j in range(i - k, i):
                 temp, q = one(replace(work[j], target=max(work[j].target or goal, goal)), temp, q)
             chosen = k
-            if temp >= goal - WARMUP_TOLERANCE:
+            if lowest(i, temp, q) >= goal - WARMUP_TOLERANCE:
                 break
         if not chosen:
             continue
