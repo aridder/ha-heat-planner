@@ -1213,6 +1213,24 @@ def blend_models(a: ThermalModel, b: ThermalModel, weight_a: float = 0.5) -> The
     )
 
 
+SATURATED_SHARE = 0.9  # duty_saturated: share of samples reported as (almost) fully heating
+SATURATED_MIN_SAMPLES = 48
+
+
+def duty_saturated(samples: list[Sample]) -> bool:
+    """The thermostat reports heating (duty ≥ 0.95) in ``SATURATED_SHARE`` of the samples.
+
+    Seen in a real house (Oslo, October): a kitchen floor thermostat reported
+    ``hvac_action: heating`` in ~100 % of the hours while the room tracked its target
+    within ±0.5 °C – it regulates its floor sensor by pulsing and reports heating
+    throughout. Such a duty says nothing about the heater's power.
+    """
+    if len(samples) < SATURATED_MIN_SAMPLES:
+        return False
+    on = sum(1 for s in samples if s.effective_duty >= 0.95)
+    return on >= SATURATED_SHARE * len(samples)
+
+
 def fit_thermal(
     samples: list[Sample],
     prior: ThermalModel | None = None,
@@ -1320,6 +1338,13 @@ def fit_thermal(
             lag = best
 
     g_fit, rows = gross_for(lag)
+    if duty_saturated(pts):
+        # "heating" nearly all the time while the room holds steady: the reported duty is
+        # not the heater's (a floor-sensor thermostat that reports heating while it pulses
+        # the floor). Its ratio is only the room's loss rate and would make the heater look
+        # weak and always on (a planner then pre-heats for hours and books its full power
+        # in every hour); keep the prior instead.
+        g_fit = None
     gross_ok = g_fit is not None
     g = _clamp(g_fit if gross_ok else prior.gross_rate, 0.2, 4.0)
 

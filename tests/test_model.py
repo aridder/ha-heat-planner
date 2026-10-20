@@ -16,6 +16,7 @@ from custom_components.heat_planner.planner import (
     ZoneConfig,
     _simulate,
     blend_models,
+    duty_saturated,
     fit_thermal,
     model_quality,
     model_rmse,
@@ -217,6 +218,25 @@ def test_poor_fit_blends_with_prior():
     assert model.gross_rate == pytest.approx((raw.gross_rate + 1.0) / 2, abs=0.002)
     assert model.tau_hours == pytest.approx((raw.tau_hours + 60.0) / 2, abs=0.1)
     assert blend_models(raw, prior, 1.0).tau_hours == raw.tau_hours
+
+
+def test_fit_ignores_a_thermostat_that_always_reports_heating():
+    """Real house (kitchen floor thermostat): hvac_action=heating ~100 % of the hours while
+    the room held 22–23 °C. The 'duty' is not the heater's: keep the prior heater power
+    instead of learning a heater that barely holds the room at full power."""
+    prior = ThermalModel(gross_rate=2.0, tau_hours=30.0)
+    start = datetime(2026, 10, 18, tzinfo=UTC)
+    samples = [
+        Sample(start + timedelta(minutes=30 * k), 22.5 + 0.3 * math.sin(k / 5), 6.0 + 3 * math.sin(k / 8),
+               True, duty=1.0 if k % 40 else 0.9)
+        for k in range(96)
+    ]
+    assert duty_saturated(samples)
+    model = fit_thermal(samples, prior)
+    assert model.gross_rate == prior.gross_rate
+    assert not model.learned
+    # a normal on/off history is not "saturated"
+    assert not duty_saturated(synth())
 
 
 def test_fit_falls_back_without_data():
