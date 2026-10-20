@@ -84,6 +84,8 @@ from .twin import (
     spot_day,
 )
 
+import custom_components.heat_planner.control as _control
+import custom_components.heat_planner.energy as _energy
 import custom_components.heat_planner.planner as _planner
 
 # The harness mirrors the coordinator of the code under test; NEW = with the
@@ -405,14 +407,16 @@ class Controller:
             since = self.state["zones"][zid].get("off_since")  # persisted across restarts
         return off_run_hours(since, now)
 
-    def plan_zone(self, zid: str, now: datetime, *, zone=None, hours=PLAN_HOURS, start=None, adjust=None, method=None) -> Plan:
+    def plan_zone(self, zid: str, now: datetime, *, zone=None, hours=PLAN_HOURS, start=None, adjust=None, method=None,
+                  kw_cap=None) -> Plan:
         st = self.state["zones"][zid]
+        extra = {"kw_cap": kw_cap} if kw_cap else {}
         return build_plan(
             zone or self.zone(zid, now), self.schedule(zid), st["overrides"], self.price_hours, PriceRules(),
             start or now, hours, away_now=self.away, room_temp=self.room_temperature(zid, now),
             outdoor=self.outdoor, outdoor_default=self.outdoor_now(now),
             method=method or ("optimize" if self.state.get("optimize") else "rules"),
-            initial_off_run=self.off_run(zid, now), solar=self.solar or None, adjust=adjust,
+            initial_off_run=self.off_run(zid, now), solar=self.solar or None, adjust=adjust, **extra,
         )
 
     def limit(self, now: datetime) -> None:
@@ -424,12 +428,29 @@ class Controller:
         if not hours or not hourly:
             self.peak_cap = None
             return
-        caps, state = plan_caps(PeakConfig(), hourly, hours, now)
         zones = {zid: self.zone(zid, now) for zid in self.plans}
         heating_avg = sum(sum(h.kwh for h in p.hours) / max(len(p.hours), 1) for p in self.plans.values())
         base = {h: max(0.0, v - heating_avg) for h, v in base_load(hourly, now=now).items()}
         self.peak_base = base
         priority = {z.zone_id: z.priority for z in self.sc.zones}
+        joint = NEW and self.state.get("optimize") and hasattr(_control, "plan_peaks")
+        if joint:
+            # mirror of the coordinator: aim for a lower step when reachable, and plan the
+            # heating against the house budget (optimiser), see control.plan_peaks
+            high = _energy.rest_of_house(hourly, self.state.setdefault("heat_log", {}), heating_avg, now)
+            self.peak_high = high
+            typical = _energy.rest_of_house(hourly, self.state["heat_log"], heating_avg, now, q=0.75)
+            self.peak_dbg = (round(max(typical.values(), default=0), 2), round(heating_avg, 2))
+            floor = _energy.peak_floor(typical, heating_avg, _energy.peak_storage(list(zones.values())))
+            caps, state = plan_caps(PeakConfig(), hourly, hours, now, floor_kw=floor)
+
+            def replan_cap(zid, kw_cap):
+                return self.plan_zone(zid, now, zone=zones[zid], kw_cap=kw_cap)
+
+            self.plans = _control.plan_peaks(zones, dict(self.plans), caps, high, priority, replan_cap)
+            self.peak_cap = state.cap_kw
+            return
+        caps, state = plan_caps(PeakConfig(), hourly, hours, now)
 
         def replan(zid, cuts, pred):
             zone = zones[zid]
@@ -495,6 +516,8 @@ class Controller:
             self.plans[z.zone_id] = self.plan_zone(z.zone_id, now)
         self.replan_ms.append((_time.process_time() - t0) * 1000)
         self.limit(now)
+        if hasattr(_energy, "log_heating"):
+            _energy.log_heating(self.state.setdefault("heat_log", {}), self.plans, now)
         self.guard(now)
         for zid, plan in self.plans.items():
             self.apply(zid, plan, now)

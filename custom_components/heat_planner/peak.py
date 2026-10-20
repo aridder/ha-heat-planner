@@ -147,8 +147,12 @@ def cap_for_hour(
     *,
     today: date | None = None,
     reference_kw: float | None = None,
+    limit_kw: float | None = None,
 ) -> float:
     """kW (= kWh per hour) to stay under for the rest of today.
+
+    ``limit_kw`` (see :func:`choose_limit`) replaces the current step's limit: the
+    month's top-3 average to aim for.
 
     ``month_daily_peaks`` are the peaks of the *other* days of this month (an
     entry for ``today`` is ignored). The target is the current step – the step
@@ -168,9 +172,12 @@ def cap_for_hour(
     others = sorted(
         (v for d, v in month_daily_peaks if today is None or d != today), reverse=True
     )
-    current = top3_average(others + ([today_peak_so_far] if today_peak_so_far > 0 else []))
-    basis = max(current, reference_kw or 0.0)
-    limit = cfg.step_for(basis).upper_kw - cfg.margin_kw
+    if limit_kw is not None:
+        limit = limit_kw
+    else:
+        current = top3_average(others + ([today_peak_so_far] if today_peak_so_far > 0 else []))
+        basis = max(current, reference_kw or 0.0)
+        limit = cfg.step_for(basis).upper_kw - cfg.margin_kw
 
     k = min(3, len(others) + 1)
     # Never above the limit itself: spending the month's headroom on one day
@@ -181,6 +188,50 @@ def cap_for_hour(
     return round(max(allowed, today_peak_so_far, cfg.min_cap_kw), 3)
 
 
+def choose_limit(
+    cfg: PeakConfig,
+    month_daily_peaks: Iterable[tuple[date, float]],
+    today_peak_so_far: float,
+    *,
+    today: date,
+    days_left: int,
+    reference_kw: float | None = None,
+    floor_kw: float | None = None,
+) -> float:
+    """The month's top-3 average to aim for (a step boundary minus ``margin_kw``).
+
+    By default the current step (this month so far, or ``reference_kw`` – last
+    month – if higher): it is defended, never given up. With ``floor_kw`` – an
+    estimate of the lowest daily peak the house can reach (the rest of the house
+    at a high estimate plus the heating that cannot be moved, see
+    :func:`energy.peak_floor`) – a cheaper, lower step is aimed for when it is
+    still reachable this month: if every remaining day (today included) ends at
+    ``floor_kw``, the top-3 average must come out under that step (with half the
+    margin). A day
+    already above it does not end the attempt as long as the arithmetic still
+    works; once it does not, the current step is defended again.
+    """
+    others = [v for d, v in month_daily_peaks if d != today]
+    current = top3_average(others + ([today_peak_so_far] if today_peak_so_far > 0 else []))
+    step = cfg.step_for(max(current, reference_kw or 0.0))
+    default = step.upper_kw - cfg.margin_kw
+    if floor_kw is None:
+        return default
+    rest = [max(today_peak_so_far, floor_kw)] + [floor_kw] * max(0, min(3, days_left - 1))
+    best_case = top3_average(others + rest)
+    for upper, cost in sorted(cfg.steps):
+        if upper >= step.upper_kw - 1e-9:
+            break
+        lim = upper - cfg.margin_kw
+        if cost >= step.cost or lim < max(floor_kw, cfg.min_cap_kw):
+            continue
+        # judged against the step itself (with half the margin): the margin is for
+        # planning, and a day that ended a little over the limit must not end the attempt
+        if best_case <= upper - cfg.margin_kw / 2 + 1e-9:
+            return lim
+    return default
+
+
 def caps_for_plan(
     hours: Iterable[datetime],
     month_daily_peaks: Iterable[tuple[date, float]],
@@ -189,12 +240,14 @@ def caps_for_plan(
     cfg: PeakConfig,
     *,
     reference_kw: float | None = None,
+    limit_kw: float | None = None,
 ) -> dict[datetime, float]:
     """Caps for every plan hour (today and following days).
 
     Days after today assume each earlier day ends exactly at its cap (worst
     case). A new month starts empty, with the previous month's projected top-3
-    average as ``reference_kw``.
+    average as ``reference_kw``. ``limit_kw`` (this month only): the top-3 average
+    to aim for instead of the current step's (see :func:`choose_limit`).
     """
     today = now.date()
     peaks: dict[date, float] = {d: v for d, v in month_daily_peaks if d != today}
@@ -203,13 +256,15 @@ def caps_for_plan(
     days = sorted({h.date() for h in hours if h.date() >= today} | {today})
     ref = reference_kw
     month = (today.year, today.month)
+    lim = limit_kw
     for d in days:
         if (d.year, d.month) != month:
             month = (d.year, d.month)
             ref = max(ref or 0.0, top3_average(list(peaks.values())))
             peaks = {}
+            lim = None
         so_far = today_peak_so_far if d == today else 0.0
-        cap = cap_for_hour(list(peaks.items()), so_far, cfg, reference_kw=ref)
+        cap = cap_for_hour(list(peaks.items()), so_far, cfg, reference_kw=ref, limit_kw=lim)
         day_caps[d] = cap
         peaks[d] = cap
     return {h: day_caps.get(h.date(), day_caps[today]) for h in hours}

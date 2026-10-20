@@ -54,6 +54,7 @@ from .control import (
     needs_write,
     off_run_hours,
     pause_end,
+    plan_peaks,
     round_step,
     safety_hold,
     settle,
@@ -65,8 +66,12 @@ from .energy import (
     apply_cuts,
     base_load,
     house_meter,
+    log_heating,
+    peak_floor,
     peak_from_options,
+    peak_storage,
     plan_caps,
+    rest_of_house,
     tariff_from_options,
 )
 from .learning import samples_from_history
@@ -456,6 +461,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         start: datetime | None = None,
         adjust=None,
         method: str | None = None,
+        kw_cap: dict[datetime, float] | None = None,
     ) -> Plan:
         return build_plan(
             zone or self.zone(zone_id),
@@ -473,6 +479,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             initial_off_run=self._off_run(zone_id),
             solar=self.solar or None,
             adjust=adjust,
+            kw_cap=kw_cap or None,
         )
 
     def _off_run(self, zone_id: str) -> int:
@@ -510,9 +517,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     async def _limit_peaks(self) -> None:
         """Spread heating between rooms so the month's capacity step holds.
 
-        Needs a whole-house meter. Cuts are re-planned (recovery hours included)
-        and repeated a few rounds; if they do not lower the house peak they are
-        dropped again, so comfort is never traded for nothing.
+        Needs a whole-house meter. With the optimiser the heating is planned against
+        the house budget (cap minus a high estimate of the rest of the house), and a
+        lower step is aimed for while the month can still reach it. With the rules,
+        cuts are re-planned (recovery hours included) and repeated a few rounds; if
+        they do not lower the house peak they are dropped again, so comfort is never
+        traded for nothing.
         """
         cfg = peak_from_options(self.options)
         if cfg is None or not self.plans:
@@ -523,7 +533,6 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if not hours or not hourly:
             self.peak_state = None
             return
-        caps, state = plan_caps(cfg, hourly, hours, dt_util.now())
         zones = {zid: self.zone(zid) for zid in self.plans}
         # rest of the house: low estimate of total use minus a stable estimate of heating
         heating_avg = sum(
@@ -532,6 +541,30 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         base = {h: max(0.0, v - heating_avg) for h, v in base_load(hourly).items()}
         self._peak_base = base
         priority = {z[CONF_ZONE_ID]: int(z.get("priority", 0) or 0) for z in self.zone_configs}
+
+        if self.optimize:
+            # plan the heating against the house budget (the worst days' rest of the
+            # house), and aim for a lower step while the month can still reach it
+            # (control.plan_peaks, peak.choose_limit)
+            log = self._heat_log()
+            high = rest_of_house(hourly, log, heating_avg)
+            typical = rest_of_house(hourly, log, heating_avg, q=0.75)
+            floor = peak_floor(typical, heating_avg, peak_storage(list(zones.values())))
+            caps, state = plan_caps(cfg, hourly, hours, dt_util.now(), floor_kw=floor)
+
+            def replan_cap(zid: str, kw_cap: dict[datetime, float]) -> Plan | None:
+                try:
+                    return self.plan_zone(zid, zone=zones[zid], kw_cap=kw_cap)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.exception("Could not plan %s against the capacity budget", zid)
+                    return None
+
+            self.plans = plan_peaks(zones, dict(self.plans), caps, high, priority, replan_cap)
+            state.shed = sorted(self._shed)
+            self.peak_state = state
+            return
+
+        caps, state = plan_caps(cfg, hourly, hours, dt_util.now())
 
         def replan(zid: str, cuts: dict[datetime, float], pred: dict[datetime, float]) -> Plan | None:
             zone = zones[zid]
@@ -548,6 +581,23 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.plans = current
         state.shed = sorted(self._shed)
         self.peak_state = state
+
+    def _heat_log(self) -> dict[datetime, float]:
+        """Heating we planned per past hour (Store: ISO keys), for the rest-of-house estimate."""
+        out: dict[datetime, float] = {}
+        for k, v in (self.state.get("heat_log") or {}).items():
+            t = dt_util.parse_datetime(str(k))
+            if t is not None:
+                out[hour_key(t)] = float(v)
+        return out
+
+    def _log_heating(self) -> None:
+        if not self.plans or peak_from_options(self.options) is None:
+            return
+        log = self._heat_log()
+        log_heating(log, self.plans, dt_util.now())
+        self.state["heat_log"] = {k.isoformat(): v for k, v in log.items()}
+        self.store.async_delay_save(lambda: self.state, 60)
 
     def _track_energy(self, kw: float, now: datetime) -> None:
         """Integrate live whole-house power into energy for the current clock hour."""
@@ -606,6 +656,7 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 failed.add(zid)
         try:
             await self._limit_peaks()
+            self._log_heating()
             self._realtime_guard()
         except Exception:  # noqa: BLE001 - peak limiting is a refinement
             _LOGGER.exception("Capacity-tariff limiting failed")
