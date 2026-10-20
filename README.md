@@ -15,7 +15,7 @@
 [![Open your Home Assistant instance and open this repository in HACS.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=aridder&repository=ha-heat-planner&category=integration)
 [![Open your Home Assistant instance and start setting up Heat Planner.](https://my.home-assistant.io/badges/config_flow_start.svg)](https://my.home-assistant.io/redirect/config_flow_start/?domain=heat_planner)
 
-<img src="docs/card.png" alt="The Heat Planner card: price bars, the target ribbon for each hour, the expected room temperature, the contract and capacity step, and an honest savings line" width="860">
+<img src="docs/card.png" alt="The Heat Planner card: the room temperature in large type with the target and the next change, a status chip, the expected room temperature as a smooth curve over the target step line, the price panel, the whole-house panel with the cap, and tiles for cost, saving and the capacity step" width="860">
 
 </div>
 
@@ -241,9 +241,11 @@ type: custom:heat-planner-card
 
 ## Everyday use
 
-**Read the plan.** Tabs pick the room. The sentence at the top says what's happening now and next. The coloured ribbon is the target, the dashed line is the expected room temperature, the bars are the price you actually pay. Point at or tap an hour to see why – including *chosen by the optimiser* and *keeping the monthly peak down*. Under the chart: your contract and, with peak limiting, the capacity step, the month's top‑3 average and today's cap. At the bottom, one honest line, e.g. *“Saves about 3.93 kr, but uses 0.2 kWh more”* or *“Price control saves almost nothing today”*.
+**Read the plan.** Tabs pick the room. At the top: the room's temperature, the target now and the next change, and a chip that says why (*Following the schedule*, *Pre-heating before the price peak 17–20*, *Saving in an expensive hour* …). In the chart, the smooth curve is the expected room temperature and the step line is the target, coloured only where the plan does something (pre-heat, saving, lowered, comfort). Below it: the price you actually pay with the day's highest and lowest hour labelled – or, with a fixed price such as Norgespris, one line saying so – and, with a house meter, the whole house against today's cap. Point at or tap an hour to see its target, expected temperature, price and why – including *chosen by the optimiser* and *keeping the monthly peak down*. At the bottom, tiles for the next 24 hours' cost, what price control saves (honestly: *almost nothing today* when that's the case), the capacity step and today's cap.
 
-**Too cold? Too warm?** Tap a button under the sentence. One small, bounded change is made, and the card tells you what it was:
+**Look back.** *Last 24 h / Last 48 h* shows the measured temperature against the target, shades the hours that were too cold or too warm, marks manual changes, capacity set-backs and heating off, and sums it up in tiles: average vs target, hours below target, energy and cost, and the highest house hour vs the cap.
+
+**Too cold? Too warm?** Tap a button next to the temperature. One small, bounded change is made, and the card tells you what it was:
 
 | You tap | while the plan was … | Change |
 | --- | --- | --- |

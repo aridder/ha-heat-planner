@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.0
+
+### A calmer, easier card
+- **The temperature first:** the room's temperature in large type, with the target now and the next change beside it, and one coloured chip that says why (*Following the schedule*, *Pre-heating before the price peak 17–20*, *Saving in an expensive hour* …). *Too cold* / *Too warm* are quieter.
+- **One line for the plan:** the expected room temperature is a smooth curve with a soft fill, the target one continuous step line, coloured only where the plan does something. No more tall bars. The chart zooms in on the temperatures that matter and names the key moments directly (*Pre-heat*, the coldest point).
+- **Point or tap for details:** every hour shows target, expected temperature, price and why – with the mouse, a tap on a phone (tap elsewhere to close) or the arrow keys.
+- **Prices with a scale:** a panel of its own with values and the day's highest and lowest hour labelled. With a fixed price such as Norgespris there is no wall of identical bars, just one line: *Fixed price 76–86 øre/kWh – no price control needed*.
+- **Whole house:** with a house meter, its own panel with planned and measured hours and today's cap; hours over the cap turn red.
+- **Percent rooms** (regulators) show the planned level as a stepped area – no temperature line on the % axis any more.
+- **Look back** shades the hours that were too cold or too warm, puts manual changes and capacity set-backs on a slim row of their own, and sums up in tiles: average vs target, hours below target, energy and cost, highest house hour vs the cap.
+- **Tiles instead of run-on lines:** cost and saving for the next 24 hours, the capacity step and today's cap. The big legend is gone; a one-line key lists only what the chart shows.
+- Works the same in light and dark themes and down to phone width.
+
 ## 0.5.0
 
 ### Capacity tariff planned with the heating (benchmark round 2)

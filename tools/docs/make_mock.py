@@ -161,6 +161,22 @@ peak_state = {
     "step_cost": step.cost, "next_step_kw": step.upper_kw, "metered": True, "shed": [],
 }
 
+
+def _base_kw(hour: int) -> float:  # the rest of the house: mornings and evenings are busy
+    return 0.9 + (2.6 if hour in (7, 8, 17, 18, 19) else 0.8 if 9 <= hour <= 22 else 0.0)
+
+
+# House load for the plan horizon (like Coordinator._load_export): base load + planned heating,
+# the current hour projected from the meter.
+_planned: dict[str, float] = {}
+for _z in zones_out:
+    for _h in _z["plan"]["hours"]:
+        _planned[_h["start"]] = _planned.get(_h["start"], 0.0) + _h["kwh"]
+peak_state["load"] = [
+    {"start": k, "kw": round(_base_kw(datetime.fromisoformat(k).hour) + v, 2), **({"live": True} if k == start.isoformat() else {})}
+    for k, v in sorted(_planned.items())
+]
+
 levels = planner.classify_prices(prices, rules)
 
 # --------------------------------------------------------------------------- look-back (heat_planner/history)
@@ -228,7 +244,7 @@ for (spec, zc), zout in zip(configs, zones_out):
     })
 home_rows = []
 for k in sorted(house):
-    base = 0.9 + (2.6 if k.hour in (7, 8, 17, 18, 19) else 0.8 if 9 <= k.hour <= 22 else 0.0)
+    base = _base_kw(k.hour)
     home_rows.append({"start": k.isoformat(), "house_kwh": round(base + house[k], 2), "cap_kw": None, "live": k == start})
 history = {
     "entry_id": "example", "hours": 48, "now": NOW.isoformat(), "start": HSTART.isoformat(),

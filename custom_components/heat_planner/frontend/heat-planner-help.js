@@ -13,6 +13,23 @@
   const LEVEL = { c: "var(--hp-cheap)", n: "var(--hp-pnormal)", e: "var(--hp-exp)", x: "var(--hp-ext)" };
   const M = { n: "normal", c: "comfort", s: "setback", p: "preheat", v: "save", o: "off", a: "away" };
 
+  /** Smooth path without overshoot (monotone cubic), like the card's expected-temperature line. */
+  function smooth(pts) {
+    const n = pts.length, f = (v) => v.toFixed(1);
+    if (n < 3) return pts.map((p, i) => `${i ? "L" : "M"}${f(p[0])},${f(p[1])}`).join("");
+    const dx = [], m = [];
+    for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1][0] - pts[i][0]; m[i] = (pts[i + 1][1] - pts[i][1]) / dx[i]; }
+    const tg = [m[0]];
+    for (let i = 1; i < n - 1; i++) tg[i] = m[i - 1] * m[i] <= 0 ? 0 : (3 * (dx[i - 1] + dx[i])) / ((2 * dx[i] + dx[i - 1]) / m[i - 1] + (dx[i] + 2 * dx[i - 1]) / m[i]);
+    tg[n - 1] = m[n - 2];
+    let d = `M${f(pts[0][0])},${f(pts[0][1])}`;
+    for (let i = 0; i < n - 1; i++) {
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1], h = dx[i] / 3;
+      d += `C${f(x0 + h)},${f(y0 + tg[i] * h)} ${f(x1 - h)},${f(y1 - tg[i + 1] * h)} ${f(x1)},${f(y1)}`;
+    }
+    return d;
+  }
+
   /* ---------- tiny chart renderer (same visual language as the plan card) ---------- */
   function chart(o) {
     const n = o.prices.length, W = o.w || 640, ml = 34, mr = 10, top = 30, ch = o.ch || 120;
@@ -31,18 +48,35 @@
       s += `<line x1="${ml}" x2="${W - mr}" y1="${Y(o.hline.v)}" y2="${Y(o.hline.v)}" class="hl"/>`;
       s += `<text x="${W - mr - 2}" y="${Y(o.hline.v) - 5}" class="hlt">${esc(o.hline.label)}</text>`;
     }
+    // expected room temperature: a smooth line with a soft fill (as in the card's plan); dashed next to a measured line
+    if (o.pred) {
+      const pts = o.pred.map((v, i) => [X(i) + bw / 2, Y(v)]);
+      const d = smooth(pts);
+      if (!o.meas) s += `<path d="${d}L${pts[pts.length - 1][0]},${top + ch}L${pts[0][0]},${top + ch}Z" fill="url(#hpg-${o.gid || "x"})"/>`;
+      s += `<path d="${d}" class="${o.meas ? "pred" : "exp"}"/>`;
+    }
+    // the target: one continuous step line, coloured by what the plan is doing
+    // (hours with the same reason make one path, so the semi-transparent "normal" line has no dots at the joins)
+    let prevY = null, run = null;
+    const flush = () => { if (run) s += `<path d="${run.d}" class="tgtl" style="stroke:${run.c}"/>`; run = null; };
     o.tgt.forEach((v, i) => {
-      if (v == null) return;
+      if (v == null) { flush(); prevY = null; return; }
       const m = M[o.modes[i]] || o.modes[i], c = MODE[m] || MODE.normal;
       if (m === "off") {
-        s += `<rect x="${X(i) + 1}" y="${top + ch - 3}" width="${bw - 2}" height="3" rx="1.5" fill="${c}"/>`;
+        flush();
+        s += `<line x1="${X(i) + 3}" x2="${X(i + 1) - 3}" y1="${top + ch - 2}" y2="${top + ch - 2}" class="offl"/>`;
         s += `<text x="${X(i) + bw / 2}" y="${top + ch - 9}" class="offt">${esc(o.offLabel || "off")}</text>`;
+        prevY = null;
         return;
       }
       const y = Y(v);
-      if (m !== "normal") s += `<rect x="${X(i) + 0.5}" y="${y}" width="${bw - 1}" height="${top + ch - y}" fill="${c}" opacity=".15"/>`;
-      s += `<rect x="${X(i) + 0.5}" y="${y - 1.5}" width="${bw - 1}" height="3" rx="1.5" fill="${c}"/>`;
+      if (run && run.c !== c) flush();
+      if (!run) run = { c, d: prevY != null ? `M${X(i)},${prevY}L${X(i)},${y}` : `M${X(i)},${y}` };
+      else run.d += `L${X(i)},${y}`;
+      run.d += `L${X(i + 1)},${y}`;
+      prevY = y;
     });
+    flush();
     for (const l of o.lines || []) {
       let d = "";
       l.vals.forEach((v, i) => {
@@ -52,10 +86,6 @@
         d += `L${X(i + 1)},${Y(v)}`;
       });
       s += `<path d="${d}" class="${l.cls}"/>`;
-    }
-    if (o.pred) {
-      const d = o.pred.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v).toFixed(1)}`).join("");
-      s += `<path d="${d}" class="pred"/>`;
     }
     if (o.meas) {
       const d = o.meas.map((v, i) => `${i ? "L" : "M"}${(X(i) + bw / 2).toFixed(1)},${Y(v).toFixed(1)}`).join("");
@@ -85,7 +115,8 @@
       const cy = Math.max(top - 12, base - 17);
       s += `<g class="mk"><circle cx="${cx}" cy="${cy}" r="9.5"/><text x="${cx}" y="${cy + 4}">${esc(m.k)}</text></g>`;
     }
-    const svgEl = `<svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(o.aria || "")}">${s}</svg>`;
+    const defs = `<defs><linearGradient id="hpg-${o.gid || "x"}" x1="0" y1="0" x2="0" y2="1"><stop offset="0" style="stop-color:var(--hp-ink);stop-opacity:.12"/><stop offset="1" style="stop-color:var(--hp-ink);stop-opacity:0"/></linearGradient></defs>`;
+    const svgEl = `<svg viewBox="0 0 ${W} ${H}" class="ill" role="img" aria-label="${esc(o.aria || "")}">${defs}${s}</svg>`;
     return W >= 600 ? `<div class="scroll">${svgEl}</div>` : svgEl;
   }
 
@@ -250,7 +281,7 @@
       live: (z, src) => `Her styres <b>${z}</b>` + (src ? ` med priser fra <b>${src}</b>.` : "."),
 
       dayH: "En vanlig dag",
-      dayP: "Et eksempel med komforttemperatur 21°. Den fargede stripen er målet, den stiplede linja er forventet romtemperatur, og søylene nederst er strømprisen.",
+      dayP: "Et eksempel med komforttemperatur 21°. Trappelinja er målet, den myke kurven er forventet romtemperatur, og søylene nederst er strømprisen.",
       dayMarks: [
         ["1", "Natt", "2° lavere mens dere sover."],
         ["2", "Morgen", "Ekstra varmt 05–08, før dere står opp."],
@@ -262,7 +293,7 @@
       protectedLbl: "beskyttet", offLbl: "av",
 
       colorsH: "Fargene",
-      colorsP: "Stripen i planen skifter farge etter hva den gjør. Pek eller trykk på en time i planen for å se nøyaktig hvorfor.",
+      colorsP: "Mållinja i planen skifter farge etter hva den gjør. Pek eller trykk på en time i planen for å se nøyaktig hvorfor.",
       modes: [
         ["normal", "Vanlig", "Følger døgnkurven"],
         ["comfort", "Komfort", "Ekstra varmt, f.eks. morgen"],
@@ -447,7 +478,7 @@
       live: (z, src) => `Controlling <b>${z}</b>` + (src ? ` with prices from <b>${src}</b>.` : "."),
 
       dayH: "A normal day",
-      dayP: "An example with a comfort temperature of 21°. The coloured ribbon is the target, the dashed line is the expected room temperature, and the bars at the bottom are the electricity price.",
+      dayP: "An example with a comfort temperature of 21°. The step line is the target, the smooth curve is the expected room temperature, and the bars at the bottom are the electricity price.",
       dayMarks: [
         ["1", "Night", "2° lower while you sleep."],
         ["2", "Morning", "Extra warm 05–08, before you get up."],
@@ -459,7 +490,7 @@
       protectedLbl: "protected", offLbl: "off",
 
       colorsH: "Colours",
-      colorsP: "The ribbon changes colour with what the plan is doing. Point at or tap an hour in the plan to see exactly why.",
+      colorsP: "The target line changes colour with what the plan is doing. Point at or tap an hour in the plan to see exactly why.",
       modes: [
         ["normal", "Normal", "Follows the day curve"],
         ["comfort", "Comfort", "Extra warm, e.g. mornings"],
@@ -597,7 +628,10 @@ p.d { color:var(--hp-soft); max-width:64ch; line-height:1.55; margin:0 0 18px; f
 .ill .gl { stroke:var(--hp-line); }
 .ill .yl, .ill .xl { fill:var(--hp-soft); font-size:10.5px; font-variant-numeric:tabular-nums; }
 .ill .yl { text-anchor:end; } .ill .xl { text-anchor:middle; }
-.ill .pred { fill:none; stroke:var(--hp-ink); stroke-width:1.5; stroke-dasharray:4 4; opacity:.65; }
+.ill .pred { fill:none; stroke:var(--hp-ink); stroke-width:1.25; stroke-dasharray:3 4; opacity:.5; }
+.ill .exp { fill:none; stroke:var(--hp-ink); stroke-width:1.75; stroke-linecap:round; opacity:.8; }
+.ill .tgtl { fill:none; stroke-width:2.5; stroke-linejoin:round; stroke-linecap:round; }
+.ill .offl { stroke:var(--hp-off); stroke-width:2.5; stroke-dasharray:1 4; stroke-linecap:round; }
 .ill .act { fill:none; stroke:var(--hp-comfort); stroke-width:3; stroke-linejoin:round; }
 .ill .dot { fill:var(--hp-ink); opacity:.55; }
 .ill .meas { fill:none; stroke:var(--hp-ink); stroke-width:2; stroke-linejoin:round; stroke-linecap:round; }
@@ -632,6 +666,7 @@ p.d { color:var(--hp-soft); max-width:64ch; line-height:1.55; margin:0 0 18px; f
 .sub { font-size:13px; font-weight:600; margin:22px 0 10px; }
 .prices { display:flex; flex-wrap:wrap; gap:8px 18px; align-items:center; font-size:13px; color:var(--hp-soft); }
 .prices i { display:inline-block; width:10px; height:16px; border-radius:2px; vertical-align:-3px; margin-right:7px; }
+.prices .solid { width:20px; height:0; border-top:1.75px solid var(--hp-ink); opacity:.8; vertical-align:4px; border-radius:0; }
 .prices .dash { width:20px; height:0; border-top:1.5px dashed var(--hp-ink); opacity:.65; vertical-align:4px; border-radius:0; }
 .prices .nowi { width:0; height:16px; border-left:1.5px dashed var(--hp-ink); opacity:.6; border-radius:0; margin-right:9px; }
 
@@ -839,7 +874,7 @@ details p { margin:8px 0 2px; color:var(--hp-soft); font-size:13.5px; line-heigh
         <div class="swatches">${t.modes.map(([m, b, sp]) => `<div class="sw"><div class="chip ${m}" style="--c:${MODE[m]}"></div><div><b>${b}</b><span>${sp}</span></div></div>`).join("")}</div>
         <p class="sub">${t.levelsH}</p>
         <div class="prices">${t.levels.map(([k, l]) => `<span><i style="background:${LEVEL[k]}"></i>${l}</span>`).join("")}
-          <span><i class="dash"></i>${t.predLbl}</span><span><i class="nowi"></i>${t.nowLbl}</span></div>`);
+          <span><i class="solid"></i>${t.predLbl}</span><span><i class="nowi"></i>${t.nowLbl}</span></div>`);
 
       const rules = sec("rules", 3, t.rulesH, `<p class="d">${t.rulesP(c.r)}</p><div class="cards">${t.rules.map(([h, f], i) => {
         const r = RULES[i];
