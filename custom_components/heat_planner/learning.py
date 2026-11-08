@@ -96,6 +96,38 @@ def _cloud(st: Any) -> float | None:
     return CONDITION_CLOUD.get(state) if isinstance(state, str) else None
 
 
+def _reported_heating(st: Any) -> bool | None:
+    attrs = _attrs(st)
+    return None if "hvac_action" not in attrs else attrs.get("hvac_action") == "heating"
+
+
+def _below_setpoint(st: Any) -> bool | None:
+    """Heating inferred from the thermostat's own reading: below its setpoint."""
+    attrs = _attrs(st)
+    current, target = _float(attrs.get("current_temperature")), _float(attrs.get("temperature"))
+    if current is None or target is None or current <= 1:
+        return None
+    return current < target
+
+
+def heating_series(states: Sequence[Any]) -> _Step:
+    """When the thermostat was heating, from its ``hvac_action``.
+
+    Some thermostats report one ``hvac_action`` the whole time – always
+    ``heating`` (a floor thermostat that "heats" while it pulses the floor) or
+    always ``idle`` – whatever the room does. A constant action carries no
+    information: with "always heating" the model finds no cooling periods and
+    keeps its prior, with "always idle" it never sees the heater. Then heating is
+    inferred from the thermostat's reading against its setpoint instead (on while
+    below it), which is what such a thermostat regulates on.
+    """
+    reported = _series(states, _reported_heating)
+    if len(set(reported.v)) > 1:
+        return reported
+    inferred = _series(states, _below_setpoint)
+    return inferred if len(set(inferred.v)) > 1 else reported
+
+
 def samples_from_history(
     hist: dict[str, list],
     climate: str,
@@ -115,8 +147,8 @@ def samples_from_history(
     sensor in ``hist``, or its state list directly. Cloud cover is read from
     ``weather`` (defaults to ``outdoor``): its ``cloud_coverage`` attribute, else
     its condition; with no cloud information the solar factor is clear sky
-    × 0.6. ``duty`` is the share of each interval the thermostat reported
-    ``hvac_action: heating``. ``start``/``end`` default to the span of the
+    × 0.6. ``duty`` is the share of each interval the thermostat was heating
+    (see :func:`heating_series`). ``start``/``end`` default to the span of the
     room temperature history. Without ``lat``/``lon`` the solar factor is 0.
     """
 
@@ -134,10 +166,7 @@ def samples_from_history(
     room = _series(states(sensor), lambda s: _float(s.state)) if sensor else _Step([])
     if not room.t:
         room = _series(states(climate), current_temperature)
-    heat = _series(
-        states(climate),
-        lambda s: None if "hvac_action" not in _attrs(s) else _attrs(s).get("hvac_action") == "heating",
-    )
+    heat = heating_series(states(climate))
     out = _series(states(outdoor), _outdoor_temp)
     cloud = _series(states(weather if weather is not None else outdoor), _cloud)
 

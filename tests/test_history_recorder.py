@@ -5,8 +5,8 @@ from datetime import timedelta
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 import pytest
+from pytest_homeassistant_custom_component.components.recorder.common import async_wait_recording_done
 
 from custom_components.heat_planner.history import hour_id
 from custom_components.heat_planner.planner import hour_key
