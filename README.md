@@ -183,7 +183,7 @@ What is worth doing depends on your contract. Pick it in the step **Electricity 
 | --- | --- |
 | **Spot price** | Moves heat away from expensive hours when the room model says it pays. This is where price control saves the most. |
 | **Spot with strømstøtte** | Plans with the price *after* support. Above 0.77 kr/kWh ex. VAT you pay only 10 % of the rest, so peaks are flattened and there is much less to gain – expect the savings line to say so. |
-| **Norgespris / fixed price** | The energy price is the same every hour, so moving heat saves almost nothing. What is left is the grid tariff's **day/night difference** (Elvia: 36.40 vs 26.40 øre) and, with a whole‑house meter, **keeping the capacity step down**. Schedules, presence, the room model and the safety net work as before, and planning keeps going even when spot prices are missing. |
+| **Norgespris / fixed price** | The energy price is the same every hour, so moving heat saves almost nothing. What is left is the grid tariff's **day/night difference** and, with a whole‑house meter, **keeping the capacity step down**. Prices are only shifted for when a day's highest and lowest price differ by at least 15 øre/kWh; Elvia's 36.40 vs 26.40 øre (10 øre) is below that, because the extra losses of a pre‑heated floor eat most of it. With Norgespris + Elvia the plan therefore follows your schedule, and *Savings this month/today* stay at 0 – by design. Capacity limiting still moves heat when the cap would otherwise be passed. Schedules, presence, the room model and the safety net work as before, and planning keeps going even when spot prices are missing. |
 
 **Effekttrinn** applies whatever your contract is, and for direct electric heating it is often worth more than price shifting: one step up costs extra for the whole month. Turn on *Keep the monthly peak low* and pick your Tibber Pulse or HAN reader.
 
@@ -317,7 +317,7 @@ Per home (home `hjem`):
 |---|---|---|
 | `sensor.hjem_price_level` | Price level | `cheap`, `normal`, `expensive` or `extreme` |
 | `sensor.hjem_effective_electricity_price` | Effective electricity price | This hour's price per kWh incl. contract and grid tariff (attribute `tariff`) |
-| `sensor.hjem_savings_this_month` | Savings this month | Realised estimate: each finished hour's cost without price control minus the planned cost, as planned at the start of that hour. Kept across restarts |
+| `sensor.hjem_savings_this_month` | Savings this month | Realised estimate: each finished hour's cost without price control minus the planned cost, as planned at the start of that hour. Kept across restarts. 0 when nothing is shifted for price (e.g. Norgespris with Elvia's grid tariff). Attribute `hours_counted`: hours estimated since the integration was set up (not reset monthly) |
 | `sensor.hjem_savings_today` | Savings today | The same, for today |
 | `sensor.hjem_capacity_tariff_step` | Capacity tariff step | e.g. `5–10 kW`, with `step_cost`, `next_step_kw`, `top3_kw`, `month_avg_kw`, `cap_kw_today` (only with capacity limiting) |
 | `sensor.hjem_monthly_peak_average` | Monthly peak average | Average of the month's three highest daily peaks (kW) |
@@ -418,7 +418,7 @@ If the card says <b>Manual</b>, someone changed the thermostat. Tap <b>Resume pl
 Day‑ahead prices are published around 13:00 CET and fetched automatically. Until then, hours after midnight follow the day curve.
 </details>
 <details><summary><b>I'm on a fixed price (e.g. Norgespris).</b></summary>
-Choose <b>Fixed price</b> under Configure → <i>Electricity contract and capacity tariff</i>. Heat Planner then plans with your fixed price plus the grid tariff's day/night charge, so it only shifts heat where the grid tariff makes it worth it – and with a whole‑house meter it keeps your capacity step down. See <a href="#norway-norgespris-strømstøtte-and-effekttrinn">Norway</a>.
+Choose <b>Fixed price</b> under Configure → <i>Electricity contract and capacity tariff</i>. Heat Planner then plans with your fixed price plus the grid tariff's day/night charge, so it only shifts heat when a day's prices differ by at least 15 øre/kWh. Elvia's day/night difference (10 øre) is below that, so with Norgespris + Elvia the plan follows your schedule and the savings sensors stay at 0 – with a whole‑house meter it still keeps your capacity step down. See <a href="#norway-norgespris-strømstøtte-and-effekttrinn">Norway</a>.
 </details>
 <details><summary><b>The savings line says “almost nothing”.</b></summary>
 That's honest, not a bug: with strømstøtte, a fixed price or a flat price day there is little to gain from moving heat. The line also tells you when pre‑heating uses extra kWh or the room ends up colder than your curve.
@@ -497,7 +497,7 @@ The screenshots in `docs/` are rendered from the real card and guide with exampl
 | --- | --- |
 | **Spotpris** | Flytter varme bort fra dyre timer når rommodellen sier det lønner seg. |
 | **Spotpris med strømstøtte** | Planlegger med prisen etter støtte. Toppene blir flate, så det er mye mindre å hente – og det står i sparelinjen. |
-| **Norgespris / fastpris** | Lite å spare på å flytte forbruk. Det som gjenstår er nettleiens dag/natt‑forskjell og å holde effekttrinnet nede. Planen virker selv om spotprisene mangler. |
+| **Norgespris / fastpris** | Lite å spare på å flytte forbruk. Det som gjenstår er nettleiens dag/natt‑forskjell og å holde effekttrinnet nede. Varme flyttes bare når døgnets høyeste og laveste pris skiller minst 15 øre/kWh; Elvias 10 øre er under det, så med Norgespris + Elvia følger planen kurven din og «Besparelse denne måneden/i dag» står på 0 – med vilje. Planen virker selv om spotprisene mangler. |
 
 **I hverdagen:** dra over timene for å endre et døgn og lagre for én dag, en ukedag, hverdager, helg eller alle dager. Trykk **For kaldt** eller **For varmt** – Heat Planner justerer én ting litt og sier hva. Optimereren slås av og på med **Optimer (alle rom)** under Innstillinger, og «Varmt igjen fra» kan stå på **Auto**, så lærer den når dere pleier å komme hjem. Stiller du termostaten selv, tar Heat Planner pause til neste planendring. Trykk **Slik fungerer det** i kortet for en illustrert veiledning – eller legg den på en egen side med `type: custom:heat-planner-help-card`.
 

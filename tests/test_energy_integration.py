@@ -58,6 +58,38 @@ async def test_elvia_grid_tariff_in_prices(hass: HomeAssistant, setup_states, fr
     assert "Elvia" in coord.export()["tariff"]["label"]
 
 
+async def test_fixed_price_prices_the_whole_horizon(hass: HomeAssistant, setup_states, freezer: FrozenDateTimeFactory) -> None:
+    """Norgespris with a spot source: the hours past the last spot price are priced too.
+
+    The spot sensor only has today; at 10:00 the next 24 h run into tomorrow. Pricing only
+    the spot hours left those unpriced and the 24 h cost sensor unknown until ~13:00.
+    """
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=10, minutes=5))
+    coord = await _setup(hass, _entry({"contract": "fixed", "fixed_price": 0.5, "grid": "elvia_2026", "peak_limit": False}))
+    assert coord.spot_hours  # a spot source is there, only for today
+    plan = coord.plans["stue"]
+    assert all(h.price is not None and h.cost is not None for h in plan.hours)
+    assert max(coord.price_hours) > max(coord.spot_hours)
+    assert min(coord.price_hours) == min(coord.spot_hours)  # today's past hours stay priced
+    cost = hass.states.get("sensor.stue_estimated_cost_next_24_h")
+    assert cost is not None and cost.state not in ("unknown", "unavailable")
+    assert float(cost.state) > 0
+
+
+async def test_norgespris_with_elvia_saves_nothing_by_design(hass: HomeAssistant, setup_states, freezer: FrozenDateTimeFactory) -> None:
+    """Fixed price + Elvia: the day/night grid difference (0.10) is below ``min_spread`` (0.15).
+
+    Every hour is "normal", the plan is the schedule itself, and the realised savings are
+    exactly 0 per hour – that is the intended result, not a bookkeeping error.
+    """
+    freezer.move_to(dt_util.start_of_local_day() + timedelta(hours=10, minutes=5))
+    coord = await _setup(hass, _entry({"contract": "fixed", "fixed_price": 0.5, "grid": "elvia_2026", "peak_limit": False}))
+    plan = coord.plans["stue"]
+    assert {h.level for h in plan.hours} == {"normal"}
+    assert plan.savings == 0
+    assert coord._hour_savings(plan.hours[0].start) == 0
+
+
 async def test_optimiser_can_be_switched_off(hass: HomeAssistant, setup_states, hass_ws_client) -> None:
     entry = _entry({"contract": "spot_support", "grid": "elvia_2026", "peak_limit": False})
     coord = await _setup(hass, entry)

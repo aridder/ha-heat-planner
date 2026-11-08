@@ -503,8 +503,12 @@ class HeatPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         points = await self.prices.async_get()
         self.spot_hours = hourly_prices(points)
         tariff = tariff_from_options(self.options)
-        if tariff.mode == "fixed" and not self.spot_hours:
-            self.price_hours = fixed_prices(hours_from(dt_util.now(), PLAN_HOURS), tariff)
+        if tariff.mode == "fixed":
+            # A fixed price is known for every hour, also past the last published spot
+            # price (tomorrow's come ~13:00). Pricing only the spot hours left the rest
+            # of the horizon unpriced, so the 24 h cost sensor was unknown half the day.
+            hours = set(self.spot_hours) | set(hours_from(dt_util.now(), PLAN_HOURS))
+            self.price_hours = fixed_prices(sorted(hours), tariff)
         else:
             self.price_hours = effective_prices(self.spot_hours, tariff)
 

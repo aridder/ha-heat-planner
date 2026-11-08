@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **Fixed price + spot source:** every hour of the plan is now priced. Before, only the hours with a published spot price were, so *Estimated cost next 24 h* was unknown until tomorrow's prices came (~13:00) even though a fixed price is known in advance.
+- **Model learning with a stuck `hvac_action`:** a thermostat that reports the same action all the time (always *heating*, or always *idle*) – or none at all – is now learned from its temperature against its setpoint. Before, an always-heating thermostat never learned (no cooling periods), and an always-idle one learned only the cooling, never the heater.
+- **Docs:** with Norgespris + Elvia the day/night grid difference (10 øre) is below the 15 øre needed to shift heat, so the plan follows the schedule and the savings sensors stay at 0 by design. `hours_counted` counts since setup.
+
 ## 0.6.0
 
 ### A calmer, easier card

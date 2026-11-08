@@ -288,3 +288,55 @@ def test_samples_from_history_duty_outdoor_and_sun():
     s3 = samples_from_history(hist, "climate.stue", None, hist["weather.home"], None, None)
     assert all(x.solar == 0.0 for x in s3) and s3[0].outdoor == 12.0
     assert samples_from_history({}, "climate.x", None, None, LAT, LON) == []
+
+
+def _thermostat_history(action: str | None, *, days: int = 14, gross: float = 1.2, tau: float = 40.0) -> list:
+    """A floor thermostat on its own air sensor: on while below its setpoint (21 °C day,
+    18 °C night), with ``hvac_action`` stuck at ``action`` (None = no such attribute)."""
+    model = ThermalModel(gross_rate=gross, tau_hours=tau)
+    t0 = datetime(2026, 10, 25, tzinfo=UTC)
+    temp, states = 20.0, []
+    for k in range(days * 144):  # 10-minute states
+        t = t0 + timedelta(minutes=10 * k)
+        setpoint = 21.0 if 6 <= t.hour < 22 else 18.0
+        out = 4 + 3 * math.sin(2 * math.pi * k / 144)
+        attrs = {"current_temperature": round(temp, 1), "temperature": setpoint}
+        if action is not None:
+            attrs["hvac_action"] = action
+        states.append(_st(t, "heat", **attrs))
+        on = temp < setpoint
+        for _ in range(2):
+            temp = model.step(temp, 1.0 if on else 0.0, out, 5 / 60, 0.0)
+    return states
+
+
+@pytest.mark.parametrize("action", ["heating", "idle", None])
+def test_stuck_hvac_action_learns_from_the_setpoint(action):
+    """Real house: the kitchen thermostat reported "heating" in 1415 of 1418 states and the
+    living room "idle" in all of them. A constant action says nothing about the heater, so
+    heating is read from the thermostat's temperature against its setpoint instead."""
+    hist = {"climate.k": _thermostat_history(action)}
+    samples = samples_from_history(hist, "climate.k", None, None, None, None)
+    assert samples
+    assert not duty_saturated(samples)
+    assert 0.1 < sum(s.effective_duty for s in samples) / len(samples) < 0.9
+    prior = ThermalModel(gross_rate=0.7, tau_hours=38.5)
+    model = fit_thermal(samples, prior)
+    assert model.learned
+    assert model.gross_rate == pytest.approx(1.2, rel=0.25)
+    assert model.tau_hours == pytest.approx(40, rel=0.25)
+    assert model_quality(model) == "good"
+
+
+def test_stuck_hvac_action_without_setpoint_is_kept():
+    """No setpoint to infer from (or it never crosses): the reported action stays."""
+    t0 = datetime(2026, 10, 25, tzinfo=UTC)
+    hist = {"climate.k": [
+        _st(t0 + timedelta(minutes=30 * k), "heat", current_temperature=22.0 + 0.1 * (k % 3), hvac_action="heating")
+        for k in range(48)
+    ]}
+    samples = samples_from_history(hist, "climate.k", None, None, None, None)
+    assert samples and all(s.duty == 1.0 for s in samples)
+    hist["climate.k"].append(_st(t0 + timedelta(hours=25), "heat", current_temperature=0.5, temperature=21.0,
+                                 hvac_action="heating"))
+    assert all(s.duty == 1.0 for s in samples_from_history(hist, "climate.k", None, None, None, None))
